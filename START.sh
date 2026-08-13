@@ -303,7 +303,6 @@ run_ffmpeg_with_progress() {
     if [ $res -eq 0 ] && [ -s "$output_file" ]; then
         return 0
     else
-        echo -e "  ${C_RED}${C_BOLD}[🛑 PRERUŠENO / CHYBA]${C_RESET} Konverze byla přerušena nebo selhala."
         rm -f "$output_file"
         return 1
     fi
@@ -583,23 +582,13 @@ process_files() {
 
                 elif [ "$ENCODER_MODE" == "VAAPI" ]; then
                     run_ffmpeg_with_progress "$file" "AMD VAAPI export: $filename" "$out_mp4" \
-                        -hwaccel vaapi -hwaccel_device /dev/dri/renderD128 -hwaccel_output_format vaapi \
+                        -vaapi_device /dev/dri/renderD128 \
                         -y -i "$file" \
                         -map "0:v?" -map "0:a?" -map_chapters 0 \
+                        -vf 'format=nv12,hwupload' \
                         -c:v h264_vaapi -b:v "$target_bitrate" \
                         -c:a aac -b:a "$AUDIO_BITRATE" "$out_mp4"
                     ret=$?
-
-                    if [ $ret -ne 0 ]; then
-                        run_ffmpeg_with_progress "$file" "AMD VAAPI export (SW decode): $filename" "$out_mp4" \
-                            -vaapi_device /dev/dri/renderD128 \
-                            -y -i "$file" \
-                            -map "0:v?" -map "0:a?" -map_chapters 0 \
-                            -vf 'format=nv12,hwupload' \
-                            -c:v h264_vaapi -b:v "$target_bitrate" \
-                            -c:a aac -b:a "$AUDIO_BITRATE" "$out_mp4"
-                        ret=$?
-                    fi
                 fi
 
                 # Pokud HW akcelerace selhala nebo je režim CPU
