@@ -204,6 +204,7 @@ process_files() {
     local total_processed=0
     local import_processed=0
     local export_processed=0
+    declare -A failed_files
 
     while true; do
         local pass_processed=0
@@ -213,10 +214,11 @@ process_files() {
         # ----------------------------------------------------
         for file in "$FINAL_DIR"/*; do
             [ -f "$file" ] || continue
+            [ -n "${failed_files["$file"]}" ] && continue
 
             filename=$(basename -- "$file")
             clean_filename=$(sed -E 's/ \([0-9]+\)$//' <<< "$filename")
-            name="${clean_filename%.*}"
+            name="${filename%.*}"
             ext="${clean_filename##*.}"
             ext_lower=$(tr '[:upper:]' '[:lower:]' <<< "$ext")
 
@@ -255,10 +257,11 @@ process_files() {
         # ----------------------------------------------------
         for file in "$DAVINCI_DIR"/*; do
             [ -f "$file" ] || continue
+            [ -n "${failed_files["$file"]}" ] && continue
 
             filename=$(basename -- "$file")
             clean_filename=$(sed -E 's/ \([0-9]+\)$//' <<< "$filename")
-            name="${clean_filename%.*}"
+            name="${filename%.*}"
             ext="${clean_filename##*.}"
             ext_lower=$(tr '[:upper:]' '[:lower:]' <<< "$ext")
 
@@ -296,10 +299,11 @@ process_files() {
         # ----------------------------------------------------
         for file in "$IMPORT_DIR"/*; do
             [ -f "$file" ] || continue
+            [ -n "${failed_files["$file"]}" ] && continue
 
             filename=$(basename -- "$file")
             clean_filename=$(sed -E 's/ \([0-9]+\)$//' <<< "$filename")
-            name="${clean_filename%.*}"
+            name="${filename%.*}"
             ext="${clean_filename##*.}"
             ext_lower=$(tr '[:upper:]' '[:lower:]' <<< "$ext")
 
@@ -403,6 +407,7 @@ process_files() {
                     ((import_processed++))
                 else
                     echo -e "  ${C_RED}${C_BOLD}[❌ ERROR]${C_RESET} Conversion of video '$filename' failed."
+                    failed_files["$file"]=1
                 fi
 
             elif [ -n "$has_audio" ] || [ $is_audio_file -eq 1 ]; then
@@ -426,6 +431,7 @@ process_files() {
                     ((import_processed++))
                 else
                     echo -e "  ${C_RED}${C_BOLD}[❌ ERROR]${C_RESET} Conversion of audio '$filename' failed."
+                    failed_files["$file"]=1
                 fi
             else
                 echo -e "${C_DIM}[SKIP] File '$filename' is not a supported video or audio format.${C_RESET}"
@@ -437,10 +443,11 @@ process_files() {
         # ----------------------------------------------------
         for file in "$EXPORT_DIR"/*; do
             [ -f "$file" ] || continue
+            [ -n "${failed_files["$file"]}" ] && continue
 
             filename=$(basename -- "$file")
             clean_filename=$(sed -E 's/ \([0-9]+\)$//' <<< "$filename")
-            name="${clean_filename%.*}"
+            name="${filename%.*}"
             ext="${clean_filename##*.}"
             ext_lower=$(tr '[:upper:]' '[:lower:]' <<< "$ext")
 
@@ -580,6 +587,7 @@ process_files() {
                     ((export_processed++))
                 else
                     echo -e "  ${C_RED}${C_BOLD}[❌ ERROR]${C_RESET} Conversion of video '$filename' failed."
+                    failed_files["$file"]=1
                 fi
 
             elif [ -n "$has_audio" ] || [ $is_audio_file -eq 1 ]; then
@@ -603,6 +611,7 @@ process_files() {
                     ((export_processed++))
                 else
                     echo -e "  ${C_RED}${C_BOLD}[❌ ERROR]${C_RESET} Conversion of audio '$filename' failed."
+                    failed_files["$file"]=1
                 fi
             else
                 echo -e "${C_DIM}[SKIP] File '$filename' is not a supported video or audio format.${C_RESET}"
