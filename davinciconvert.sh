@@ -4,19 +4,18 @@
 # DavinciConvert - Smart Media Transcoder for DaVinci Resolve on Linux
 # 
 # Features:
-#   1. Converts any video/audio for DaVinci Resolve Free on Linux (ProRes 422 + PCM audio).
-#   2. Converts DaVinci exports back to H.264/AAC MP4 with yuv420p for Social Media.
-#   3. Dynamic resolution, FPS, and aspect ratio analysis (vertical 9:16 & widescreen).
-#   4. Hardware auto-detection (NVIDIA NVENC, Intel QSV, AMD VAAPI) with CPU fallback.
-#   5. Universal Matrix Protection: Bypasses redundant re-encoding & auto-routes misplaced files across all 4 folders.
-#   6. Multi-Audio Track Preservation: Maps all OBS audio streams (Microphone, Game, Discord) independently.
-#   7. Desktop Notifications: Native OS alerts via notify-send when batch processing completes.
-#   8. Linux Desktop Launcher (--install-desktop): Installs DavinciConvert to GNOME / Fedora Application Grid.
-#   9. Safety Archiving (--archive / -a): Move original raw files to ARCHIV/ instead of deleting them.
-#  10. Native Terminal Progress: Real-time status, speed, and time estimation.
-#  11. Instant Process Cancellation: Closing terminal window or Ctrl+C kills FFmpeg instantly.
-#  12. Auto-Terminal Launcher: Automatically opens a GUI terminal window when double-clicked.
-#  13. Real-time folder watching mode (--watch / -w).
+#   1. State-Machine Decision Engine with 1-pass FFprobe metadata extraction.
+#   2. Converts any video/audio for DaVinci Resolve Free on Linux (ProRes 422 + PCM audio).
+#   3. Converts DaVinci exports back to H.264/AAC MP4 with yuv420p for Social Media.
+#   4. Dynamic resolution, FPS, and aspect ratio analysis (vertical 9:16 & widescreen).
+#   5. Hardware auto-detection (NVIDIA NVENC, Intel QSV, AMD VAAPI) with CPU fallback.
+#   6. Universal Matrix Protection: Bypasses redundant re-encoding & auto-routes misplaced files across all 4 folders.
+#   7. Collision-Safe File Movement: Never overwrites files with duplicate names during auto-routing.
+#   8. Multi-Audio Track Preservation: Maps all OBS audio streams (Microphone, Game, Discord) independently.
+#   9. Quarantine System: Automatically moves damaged/unreadable files to CORRUPTED/ folder.
+#  10. Date-Based Archiving (--archive / -a): Moves original raw files to ARCHIV/YYYY-MM-DD/.
+#  11. Linux Desktop Launcher (--install-desktop): Installs DavinciConvert to GNOME / Fedora Application Grid.
+#  12. Real-time folder watching mode (--watch / -w).
 # ==============================================================================
 
 # Always change working directory strictly to the directory where this script is physically located
@@ -55,6 +54,7 @@ DAVINCI_DIR="$DIR/1_PRORES_DAVINCI"
 EXPORT_DIR="$DIR/2_EXPORT"
 FINAL_DIR="$DIR/3_FINAL_SOCIAL"
 ARCHIVE_DIR="$DIR/ARCHIV"
+CORRUPT_DIR="$DIR/CORRUPTED"
 
 # Default Quality & Processing Settings
 PRORES_PROFILE_OVERRIDE=""
@@ -134,22 +134,18 @@ send_notification() {
 }
 
 detect_best_encoder() {
-    # 1. Test NVIDIA NVENC
     if ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc=duration=1:size=64x64 -c:v h264_nvenc -f null - >/dev/null 2>&1; then
         echo "NVENC"
         return
     fi
-    # 2. Test Intel QuickSync (QSV)
     if ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc=duration=1:size=64x64 -c:v h264_qsv -f null - >/dev/null 2>&1; then
         echo "QSV"
         return
     fi
-    # 3. Test VAAPI (AMD / Linux)
     if [ -e "/dev/dri/renderD128" ] && ffmpeg -hide_banner -loglevel error -vaapi_device /dev/dri/renderD128 -y -f lavfi -i testsrc=duration=1:size=64x64 -vf 'format=nv12,hwupload' -c:v h264_vaapi -f null - >/dev/null 2>&1; then
         echo "VAAPI"
         return
     fi
-    # 4. Universal multi-threaded CPU fallback (AMD Ryzen / Intel)
     echo "CPU"
 }
 
@@ -167,6 +163,130 @@ else
 fi
 [ $ENABLE_ARCHIVE -eq 1 ] && echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Safety Archiving  :${C_RESET} ${C_GREEN}${C_BOLD}ENABLED (Moving originals to ARCHIV/)${C_RESET}"
 echo -e "${C_CYAN}${C_BOLD}╚════════════════════════════════════════════════════════════════════════════════╝${C_RESET}"
+
+# Single-pass FFprobe metadata probe function
+probe_media() {
+    local f="$1"
+    PROBE_V_CODEC=""
+    PROBE_A_CODEC=""
+    PROBE_PIX_FMT=""
+    PROBE_WIDTH=0
+    PROBE_HEIGHT=0
+    PROBE_FPS=30
+    PROBE_HAS_VIDEO=0
+    PROBE_HAS_AUDIO=0
+    PROBE_IS_ATTACHED_PIC=0
+
+    local raw_data
+    raw_data=$(ffprobe -v error -show_entries stream=codec_name,codec_type,width,height,pix_fmt,r_frame_rate -of csv=p=0 "$f" 2>/dev/null)
+    [ -z "$raw_data" ] && return 1
+
+    while IFS=',' read -r col_codec col_type col_w col_h col_pix col_fps; do
+        if [ "$col_type" == "video" ]; then
+            ((PROBE_HAS_VIDEO++))
+            [ -z "$PROBE_V_CODEC" ] && PROBE_V_CODEC="$col_codec"
+            [ "$col_w" -gt 0 ] 2>/dev/null && PROBE_WIDTH="$col_w"
+            [ "$col_h" -gt 0 ] 2>/dev/null && PROBE_HEIGHT="$col_h"
+            [ -n "$col_pix" ] && [ "$PROBE_PIX_FMT" == "" ] && PROBE_PIX_FMT="$col_pix"
+            if [ -n "$col_fps" ]; then
+                PROBE_FPS=$(awk -F"/" '{if ($2>0) print int($1/$2); else print int($1)}' <<< "$col_fps")
+            fi
+        elif [ "$col_type" == "audio" ]; then
+            ((PROBE_HAS_AUDIO++))
+            [ -z "$PROBE_A_CODEC" ] && PROBE_A_CODEC="$col_codec"
+        fi
+    done <<< "$raw_data"
+
+    if [ $PROBE_HAS_VIDEO -gt 0 ]; then
+        local att
+        att=$(ffprobe -v error -select_streams v:0 -show_entries stream_disposition=attached_pic -of csv=p=0 "$f" 2>/dev/null | head -n1 | cut -d, -f2)
+        [ "$att" == "1" ] && PROBE_IS_ATTACHED_PIC=1
+    fi
+
+    return 0
+}
+
+# Centralized State Machine Classifier
+classify_file() {
+    local f="$1"
+    
+    probe_media "$f" || { echo "STATE_INVALID"; return; }
+
+    local filename
+    filename=$(basename -- "$f")
+    local clean_filename
+    clean_filename=$(sed -E 's/ \([0-9]+\)$//' <<< "$filename")
+    local ext="${clean_filename##*.}"
+    local ext_lower
+    ext_lower=$(tr '[:upper:]' '[:lower:]' <<< "$ext")
+
+    local is_audio_ext=0
+    if [[ "$ext_lower" =~ ^(mp3|wav|flac|aac|m4a|ogg|opus|wma|aiff|ac3)$ ]]; then
+        is_audio_ext=1
+    fi
+
+    local is_video_file=0
+    if [ $PROBE_HAS_VIDEO -gt 0 ] && [ $PROBE_IS_ATTACHED_PIC -eq 0 ] && [ $is_audio_ext -eq 0 ]; then
+        is_video_file=1
+    fi
+
+    # 1. Test STATE_DAVINCI_READY
+    if [ $is_video_file -eq 1 ]; then
+        if [[ "$PROBE_V_CODEC" =~ ^(prores|dnxhd|dnxhr|cineform|rawvideo|mjpeg)$ ]] && [[ "$PROBE_A_CODEC" == pcm_* || $PROBE_HAS_AUDIO -eq 0 ]]; then
+            echo "STATE_DAVINCI_READY"
+            return
+        fi
+    elif [ $is_audio_ext -eq 1 ]; then
+        if [[ "$PROBE_A_CODEC" == pcm_* ]] && [ "$ext_lower" == "wav" ]; then
+            echo "STATE_DAVINCI_READY"
+            return
+        fi
+    fi
+
+    # 2. Test STATE_SOCIAL_READY
+    if [ $is_video_file -eq 1 ]; then
+        if [ "$PROBE_V_CODEC" == "h264" ] && [ "$PROBE_PIX_FMT" == "yuv420p" ] && [[ "$PROBE_A_CODEC" == "aac" || "$PROBE_A_CODEC" == "mp3" || $PROBE_HAS_AUDIO -eq 0 ]] && [ "$ext_lower" == "mp4" ]; then
+            echo "STATE_SOCIAL_READY"
+            return
+        fi
+    elif [ $is_audio_ext -eq 1 ]; then
+        if [ "$PROBE_A_CODEC" == "mp3" ] && [ "$ext_lower" == "mp3" ]; then
+            echo "STATE_SOCIAL_READY"
+            return
+        fi
+    fi
+
+    # 3. Test STATE_RAW_IMPORT (Any raw video/audio requiring conversion)
+    if [ $is_video_file -eq 1 ] || [ $PROBE_HAS_AUDIO -gt 0 ] || [ $is_audio_ext -eq 1 ]; then
+        echo "STATE_RAW_IMPORT"
+        return
+    fi
+
+    echo "STATE_INVALID"
+}
+
+# Collision-safe move function to prevent overwriting files with identical names
+safe_move() {
+    local src="$1"
+    local dst_dir="$2"
+    
+    mkdir -p "$dst_dir"
+    local fn
+    fn=$(basename -- "$src")
+    
+    local target="$dst_dir/$fn"
+    if [ -f "$target" ] && [ "$src" != "$target" ]; then
+        local name="${fn%.*}"
+        local ext="${fn##*.}"
+        local counter=1
+        while [ -f "$dst_dir/${name}_${counter}.${ext}" ]; do
+            ((counter++))
+        done
+        target="$dst_dir/${name}_${counter}.${ext}"
+    fi
+
+    [ "$src" != "$target" ] && mv "$src" "$target"
+}
 
 run_ffmpeg_with_progress() {
     local input="$1"
@@ -192,8 +312,9 @@ run_ffmpeg_with_progress() {
 handle_original_file() {
     local src_file="$1"
     if [ $ENABLE_ARCHIVE -eq 1 ]; then
-        mkdir -p "$ARCHIVE_DIR"
-        mv "$src_file" "$ARCHIVE_DIR/"
+        local today=$(date +%Y-%m-%d)
+        local today_archive="$ARCHIVE_DIR/$today"
+        safe_move "$src_file" "$today_archive"
     else
         rm -f "$src_file"
     fi
@@ -217,36 +338,14 @@ process_files() {
             [ -n "${failed_files["$file"]}" ] && continue
 
             filename=$(basename -- "$file")
-            clean_filename=$(sed -E 's/ \([0-9]+\)$//' <<< "$filename")
-            name="${filename%.*}"
-            ext="${clean_filename##*.}"
-            ext_lower=$(tr '[:upper:]' '[:lower:]' <<< "$ext")
-
             [[ "$filename" == .* ]] && continue
             [[ "$filename" == *.part || "$filename" == *.crdownload || "$filename" == *.tmp || "$filename" == *.download || "$filename" == *.ytdl ]] && continue
 
-            has_video=$(ffprobe -v error -show_entries stream=codec_type -of csv=p=0 "$file" 2>/dev/null | grep "^video$")
-            has_audio=$(ffprobe -v error -show_entries stream=codec_type -of csv=p=0 "$file" 2>/dev/null | grep "^audio$")
-            v_codec=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$file" 2>/dev/null | head -n1)
-            a_codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$file" 2>/dev/null | head -n1)
-            pix_fmt=$(ffprobe -v error -select_streams v:0 -show_entries stream=pix_fmt -of csv=p=0 "$file" 2>/dev/null | head -n1)
-
-            is_audio_file=0
-            if [[ "$ext_lower" =~ ^(mp3|wav|flac|aac|m4a|ogg|opus|wma|aiff|ac3)$ ]]; then is_audio_file=1; fi
-
-            is_social_ready=0
-            # Videos without audio stream (-z "$has_audio") are also social ready if H.264 yuv420p MP4
-            if [ -n "$has_video" ] && [ $is_audio_file -eq 0 ] && [ "$v_codec" == "h264" ] && [ "$pix_fmt" == "yuv420p" ] && [[ "$a_codec" == "aac" || "$a_codec" == "mp3" || -z "$has_audio" ]] && [ "$ext_lower" == "mp4" ]; then
-                is_social_ready=1
-            elif [ $is_audio_file -eq 1 ] && [ "$a_codec" == "mp3" ] && [ "$ext_lower" == "mp3" ]; then
-                is_social_ready=1
-            fi
-
-            # If file in 3_FINAL_SOCIAL is not social ready
-            if [ $is_social_ready -eq 0 ]; then
+            state=$(classify_file "$file")
+            if [ "$state" != "STATE_SOCIAL_READY" ]; then
                 echo ""
                 echo -e "${C_YELLOW}${C_BOLD}[🔀 SMART REROUTE]${C_RESET} '$filename' placed in 3_FINAL_SOCIAL by mistake. Moving to 2_EXPORT for social media encoding..."
-                mv "$file" "$EXPORT_DIR/$filename"
+                safe_move "$file" "$EXPORT_DIR"
                 ((pass_processed++))
                 ((total_processed++))
                 continue
@@ -261,34 +360,21 @@ process_files() {
             [ -n "${failed_files["$file"]}" ] && continue
 
             filename=$(basename -- "$file")
-            clean_filename=$(sed -E 's/ \([0-9]+\)$//' <<< "$filename")
-            name="${filename%.*}"
-            ext="${clean_filename##*.}"
-            ext_lower=$(tr '[:upper:]' '[:lower:]' <<< "$ext")
-
             [[ "$filename" == .* ]] && continue
             [[ "$filename" == *.part || "$filename" == *.crdownload || "$filename" == *.tmp || "$filename" == *.download || "$filename" == *.ytdl ]] && continue
 
-            has_video=$(ffprobe -v error -show_entries stream=codec_type -of csv=p=0 "$file" 2>/dev/null | grep "^video$")
-            has_audio=$(ffprobe -v error -show_entries stream=codec_type -of csv=p=0 "$file" 2>/dev/null | grep "^audio$")
-            v_codec=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$file" 2>/dev/null | head -n1)
-            a_codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$file" 2>/dev/null | head -n1)
-
-            is_audio_file=0
-            if [[ "$ext_lower" =~ ^(mp3|wav|flac|aac|m4a|ogg|opus|wma|aiff|ac3)$ ]]; then is_audio_file=1; fi
-
-            is_davinci_ready=0
-            if [ -n "$has_video" ] && [ $is_audio_file -eq 0 ] && [[ "$v_codec" == "prores" || "$v_codec" == "dnxhd" || "$v_codec" == "dnxhr" || "$v_codec" == "cineform" || "$v_codec" == "rawvideo" || "$v_codec" == "mjpeg" ]] && [[ "$a_codec" == pcm_* || -z "$has_audio" ]]; then
-                is_davinci_ready=1
-            elif [ $is_audio_file -eq 1 ] && [[ "$a_codec" == pcm_* ]] && [ "$ext_lower" == "wav" ]; then
-                is_davinci_ready=1
-            fi
-
-            # If user placed a raw MP4/MP3 into 1_PRORES_DAVINCI by mistake
-            if [ $is_davinci_ready -eq 0 ]; then
+            state=$(classify_file "$file")
+            if [ "$state" == "STATE_SOCIAL_READY" ]; then
                 echo ""
-                echo -e "${C_YELLOW}${C_BOLD}[🔀 SMART REROUTE]${C_RESET} '$filename' placed in 1_PRORES_DAVINCI by mistake. Moving to 1_IMPORT for DaVinci prep..."
-                mv "$file" "$IMPORT_DIR/$filename"
+                echo -e "${C_CYAN}${C_BOLD}[⏩ SMART BYPASS]${C_RESET} '$filename' is ALREADY converted for Social Media! Moving to 3_FINAL_SOCIAL..."
+                safe_move "$file" "$FINAL_DIR"
+                ((pass_processed++))
+                ((total_processed++))
+                continue
+            elif [ "$state" != "STATE_DAVINCI_READY" ]; then
+                echo ""
+                echo -e "${C_YELLOW}${C_BOLD}[🔀 SMART REROUTE]${C_RESET} '$filename' placed in 1_PRORES_DAVINCI by mistake. Moving to 1_IMPORT..."
+                safe_move "$file" "$IMPORT_DIR"
                 ((pass_processed++))
                 ((total_processed++))
                 continue
@@ -313,62 +399,35 @@ process_files() {
             [[ "$filename" == .* ]] && continue
             [[ "$filename" == *.part || "$filename" == *.crdownload || "$filename" == *.tmp || "$filename" == *.download || "$filename" == *.ytdl ]] && continue
 
-            has_video=$(ffprobe -v error -show_entries stream=codec_type -of csv=p=0 "$file" 2>/dev/null | grep "^video$")
-            has_audio=$(ffprobe -v error -show_entries stream=codec_type -of csv=p=0 "$file" 2>/dev/null | grep "^audio$")
-            
-            is_audio_file=0
-            if [[ "$ext_lower" =~ ^(mp3|wav|flac|aac|m4a|ogg|opus|wma|aiff|ac3)$ ]]; then
-                is_audio_file=1
-            fi
+            state=$(classify_file "$file")
 
-            if [ -n "$has_video" ]; then
-                is_attached_pic=$(ffprobe -v error -select_streams v:0 -show_entries stream=disposition:attached_pic -of csv=p=0 "$file" 2>/dev/null | head -n1 | cut -d, -f2)
-                if [ "$is_attached_pic" == "1" ] || [ $is_audio_file -eq 1 ]; then
-                    has_video=""
-                    is_audio_file=1
-                fi
-            fi
-
-            v_codec=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$file" 2>/dev/null | head -n1)
-            a_codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$file" 2>/dev/null | head -n1)
-
-            # SMART PROTECTION 1A: File is ALREADY in Apple ProRes / DNxHD / CineForm + PCM audio
-            if [ -n "$has_video" ] && [ $is_audio_file -eq 0 ] && [[ "$v_codec" == "prores" || "$v_codec" == "dnxhd" || "$v_codec" == "dnxhr" || "$v_codec" == "cineform" || "$v_codec" == "rawvideo" || "$v_codec" == "mjpeg" ]] && [[ "$a_codec" == pcm_* || -z "$has_audio" ]]; then
+            if [ "$state" == "STATE_DAVINCI_READY" ]; then
                 echo ""
-                echo -e "${C_CYAN}${C_BOLD}[⏩ SMART BYPASS]${C_RESET} '$filename' is ALREADY in ProRes/DNxHD + PCM! Moving..."
-                mv "$file" "$DAVINCI_DIR/$filename"
+                echo -e "${C_CYAN}${C_BOLD}[⏩ SMART BYPASS]${C_RESET} '$filename' is ALREADY in ProRes/DNxHD or WAV PCM! Moving..."
+                safe_move "$file" "$DAVINCI_DIR"
                 ((pass_processed++))
                 ((total_processed++))
                 ((import_processed++))
                 continue
-            fi
-
-            # SMART PROTECTION 1B: Audio file is ALREADY 48kHz WAV PCM
-            if [ $is_audio_file -eq 1 ] && [[ "$a_codec" == pcm_* ]] && [ "$ext_lower" == "wav" ]; then
+            elif [ "$state" == "STATE_SOCIAL_READY" ]; then
                 echo ""
-                echo -e "${C_CYAN}${C_BOLD}[⏩ SMART BYPASS]${C_RESET} '$filename' is ALREADY 48kHz WAV PCM. Moving..."
-                mv "$file" "$DAVINCI_DIR/$filename"
+                echo -e "${C_CYAN}${C_BOLD}[⏩ SMART BYPASS]${C_RESET} '$filename' is ALREADY converted for Social Media! Moving to 3_FINAL_SOCIAL..."
+                safe_move "$file" "$FINAL_DIR"
                 ((pass_processed++))
                 ((total_processed++))
-                ((import_processed++))
+                continue
+            elif [ "$state" == "STATE_INVALID" ]; then
+                echo ""
+                echo -e "${C_RED}${C_BOLD}[🛑 CORRUPTED FILE]${C_RESET} '$filename' is corrupted or unreadable. Moving to CORRUPTED/..."
+                safe_move "$file" "$CORRUPT_DIR"
+                ((pass_processed++))
                 continue
             fi
 
-            if [ -n "$has_video" ] && [ $is_audio_file -eq 0 ]; then
-                w=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$file" 2>/dev/null | head -n1)
-                h=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$file" 2>/dev/null | head -n1)
-                fps_str=$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of csv=p=0 "$file" 2>/dev/null | head -n1)
-                audio_tracks=$(ffprobe -v error -show_entries stream=codec_type -of csv=p=0 "$file" 2>/dev/null | grep "^audio$" | wc -l)
-
-                w=${w:-0}
-                h=${h:-0}
-                max_dim=$w
-                [ "$h" -gt "$max_dim" ] && max_dim=$h
-
-                fps=30
-                if [ -n "$fps_str" ]; then
-                    fps=$(awk -F'/' '{if ($2>0) print int($1/$2); else print int($1)}' <<< "$fps_str")
-                fi
+            # State = STATE_RAW_IMPORT (Prepare for DaVinci)
+            if [ $PROBE_HAS_VIDEO -gt 0 ] && [ $PROBE_IS_ATTACHED_PIC -eq 0 ]; then
+                max_dim=$PROBE_WIDTH
+                [ "$PROBE_HEIGHT" -gt "$max_dim" ] && max_dim=$PROBE_HEIGHT
 
                 prores_prof=1
                 label="1080p"
@@ -388,7 +447,7 @@ process_files() {
                 echo ""
                 echo -e "${C_YELLOW}${C_BOLD}┌─ [ 📥 IMPORT -> DaVinci Prep ] ───────────────────────────────────────────┐${C_RESET}"
                 echo -e "${C_YELLOW}${C_BOLD}│${C_RESET} ${C_BOLD}File:${C_RESET}        $filename"
-                echo -e "${C_YELLOW}${C_BOLD}│${C_RESET} ${C_DIM}Format:${C_RESET}      ${w}x${h} ($label @ ${fps}FPS | Audio Tracks: $audio_tracks)"
+                echo -e "${C_YELLOW}${C_BOLD}│${C_RESET} ${C_DIM}Format:${C_RESET}      ${PROBE_WIDTH}x${PROBE_HEIGHT} ($label @ ${PROBE_FPS}FPS | Audio Tracks: $PROBE_HAS_AUDIO)"
                 echo -e "${C_YELLOW}${C_BOLD}│${C_RESET} ${C_DIM}Target Codec:${C_RESET} ${C_GREEN}${C_BOLD}Apple ProRes 422 MOV + Uncompressed PCM Audio${C_RESET}"
                 echo -e "${C_YELLOW}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
 
@@ -412,7 +471,7 @@ process_files() {
                     failed_files["$file"]=1
                 fi
 
-            elif [ -n "$has_audio" ] || [ $is_audio_file -eq 1 ]; then
+            else
                 echo ""
                 echo -e "${C_YELLOW}${C_BOLD}┌─ [ 🎵 IMPORT Audio -> DaVinci Prep ] ─────────────────────────────────────┐${C_RESET}"
                 echo -e "${C_YELLOW}${C_BOLD}│${C_RESET} ${C_BOLD}File:${C_RESET}        $filename"
@@ -435,8 +494,6 @@ process_files() {
                     echo -e "  ${C_RED}${C_BOLD}[❌ ERROR]${C_RESET} Conversion of audio '$filename' failed."
                     failed_files["$file"]=1
                 fi
-            else
-                echo -e "${C_DIM}[SKIP] File '$filename' is not a supported video or audio format.${C_RESET}"
             fi
         done
 
@@ -458,84 +515,57 @@ process_files() {
             [[ "$filename" == .* ]] && continue
             [[ "$filename" == *.part || "$filename" == *.crdownload || "$filename" == *.tmp || "$filename" == *.download || "$filename" == *.ytdl ]] && continue
 
-            has_video=$(ffprobe -v error -show_entries stream=codec_type -of csv=p=0 "$file" 2>/dev/null | grep "^video$")
-            has_audio=$(ffprobe -v error -show_entries stream=codec_type -of csv=p=0 "$file" 2>/dev/null | grep "^audio$")
-            
-            is_audio_file=0
-            if [[ "$ext_lower" =~ ^(mp3|wav|flac|aac|m4a|ogg|opus|wma|aiff|ac3)$ ]]; then
-                is_audio_file=1
-            fi
+            state=$(classify_file "$file")
 
-            if [ -n "$has_video" ]; then
-                is_attached_pic=$(ffprobe -v error -select_streams v:0 -show_entries stream=disposition:attached_pic -of csv=p=0 "$file" 2>/dev/null | head -n1 | cut -d, -f2)
-                if [ "$is_attached_pic" == "1" ] || [ $is_audio_file -eq 1 ]; then
-                    has_video=""
-                    is_audio_file=1
-                fi
-            fi
-
-            v_codec=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name -of csv=p=0 "$file" 2>/dev/null | head -n1)
-            a_codec=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$file" 2>/dev/null | head -n1)
-            pix_fmt=$(ffprobe -v error -select_streams v:0 -show_entries stream=pix_fmt -of csv=p=0 "$file" 2>/dev/null | head -n1)
-
-            # SMART PROTECTION 2A: User placed a raw web/camera video into 2_EXPORT by mistake (MKV/WebM/AVI/VP9/AV1/HEVC)
-            if [ -n "$has_video" ] && [ $is_audio_file -eq 0 ] && [[ "$ext_lower" =~ ^(mkv|webm|avi|flv|wmv)$ || "$v_codec" == "vp9" || "$v_codec" == "av1" || "$v_codec" == "hevc" ]]; then
+            if [ "$state" == "STATE_RAW_IMPORT" ]; then
                 echo ""
-                echo -e "${C_YELLOW}${C_BOLD}[🔀 SMART ROUTE]${C_RESET} '$filename' appears to be raw video ($v_codec). Moving to 1_IMPORT..."
-                mv "$file" "$IMPORT_DIR/$filename"
+                echo -e "${C_YELLOW}${C_BOLD}[🔀 SMART ROUTE]${C_RESET} '$filename' appears to be raw video/audio. Moving to 1_IMPORT..."
+                safe_move "$file" "$IMPORT_DIR"
                 ((pass_processed++))
                 ((total_processed++))
                 continue
-            fi
-
-            # SMART PROTECTION 2B: File in 2_EXPORT is ALREADY a social-media-ready H.264/AAC MP4 in yuv420p (including silent videos)
-            if [ -n "$has_video" ] && [ $is_audio_file -eq 0 ] && [ "$v_codec" == "h264" ] && [ "$pix_fmt" == "yuv420p" ] && [[ "$a_codec" == "aac" || "$a_codec" == "mp3" || -z "$has_audio" ]] && [ "$ext_lower" == "mp4" ]; then
+            elif [ "$state" == "STATE_SOCIAL_READY" ]; then
                 echo ""
-                echo -e "${C_CYAN}${C_BOLD}[⏩ SMART BYPASS]${C_RESET} '$filename' is ALREADY converted for Social Media! Moving..."
-                mv "$file" "$FINAL_DIR/$filename"
+                echo -e "${C_CYAN}${C_BOLD}[⏩ SMART BYPASS]${C_RESET} '$filename' is ALREADY converted for Social Media! Moving to 3_FINAL_SOCIAL..."
+                safe_move "$file" "$FINAL_DIR"
                 ((pass_processed++))
                 ((total_processed++))
                 ((export_processed++))
                 continue
+            elif [ "$state" == "STATE_INVALID" ]; then
+                echo ""
+                echo -e "${C_RED}${C_BOLD}[🛑 CORRUPTED FILE]${C_RESET} '$filename' is corrupted or unreadable. Moving to CORRUPTED/..."
+                safe_move "$file" "$CORRUPT_DIR"
+                ((pass_processed++))
+                continue
             fi
 
-            if [ -n "$has_video" ] && [ $is_audio_file -eq 0 ]; then
-                w=$(ffprobe -v error -select_streams v:0 -show_entries stream=width -of csv=p=0 "$file" 2>/dev/null | head -n1)
-                h=$(ffprobe -v error -select_streams v:0 -show_entries stream=height -of csv=p=0 "$file" 2>/dev/null | head -n1)
-                fps_str=$(ffprobe -v error -select_streams v:0 -show_entries stream=r_frame_rate -of csv=p=0 "$file" 2>/dev/null | head -n1)
-                audio_tracks=$(ffprobe -v error -show_entries stream=codec_type -of csv=p=0 "$file" 2>/dev/null | grep "^audio$" | wc -l)
-
-                w=${w:-0}
-                h=${h:-0}
-                max_dim=$w
-                [ "$h" -gt "$max_dim" ] && max_dim=$h
-
-                fps=30
-                if [ -n "$fps_str" ]; then
-                    fps=$(awk -F'/' '{if ($2>0) print int($1/$2); else print int($1)}' <<< "$fps_str")
-                fi
+            # State = STATE_DAVINCI_READY (Exported ProRes MOV / WAV from DaVinci -> Convert to Social Media MP4/MP3)
+            if [ $PROBE_HAS_VIDEO -gt 0 ] && [ $PROBE_IS_ATTACHED_PIC -eq 0 ]; then
+                max_dim=$PROBE_WIDTH
+                [ "$PROBE_HEIGHT" -gt "$max_dim" ] && max_dim=$PROBE_HEIGHT
 
                 target_bitrate="12M"
                 label="Full HD (1080p)"
 
                 if [ "$max_dim" -ge 3800 ]; then
                     label="4K (2160p)"
-                    if [ "$fps" -gt 32 ]; then target_bitrate="35M"; else target_bitrate="28M"; fi
+                    if [ "$PROBE_FPS" -gt 32 ]; then target_bitrate="35M"; else target_bitrate="28M"; fi
                 elif [ "$max_dim" -ge 2400 ]; then
                     label="2K (1440p)"
-                    if [ "$fps" -gt 32 ]; then target_bitrate="22M"; else target_bitrate="18M"; fi
+                    if [ "$PROBE_FPS" -gt 32 ]; then target_bitrate="22M"; else target_bitrate="18M"; fi
                 elif [ "$max_dim" -ge 1800 ]; then
                     label="Full HD (1080p)"
-                    if [ "$fps" -gt 32 ]; then target_bitrate="15M"; else target_bitrate="12M"; fi
+                    if [ "$PROBE_FPS" -gt 32 ]; then target_bitrate="15M"; else target_bitrate="12M"; fi
                 else
                     label="HD (720p)"
-                    if [ "$fps" -gt 32 ]; then target_bitrate="10M"; else target_bitrate="8M"; fi
+                    if [ "$PROBE_FPS" -gt 32 ]; then target_bitrate="10M"; else target_bitrate="8M"; fi
                 fi
 
                 echo ""
                 echo -e "${C_MAGENTA}${C_BOLD}┌─ [ 📤 EXPORT -> Social Media MP4 ] ──────────────────────────────────────┐${C_RESET}"
                 echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_BOLD}File:${C_RESET}        $filename"
-                echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Format:${C_RESET}      ${w}x${h} ($label @ ${fps}FPS | Audio Tracks: $audio_tracks)"
+                echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Format:${C_RESET}      ${PROBE_WIDTH}x${PROBE_HEIGHT} ($label @ ${PROBE_FPS}FPS | Audio Tracks: $PROBE_HAS_AUDIO)"
                 echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Target Codec:${C_RESET} ${C_GREEN}${C_BOLD}H.264 MP4 (yuv420p | Bitrate: $target_bitrate)${C_RESET}"
                 echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Encoder Mode:${C_RESET} $ENCODER_MODE"
                 echo -e "${C_MAGENTA}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
@@ -593,7 +623,7 @@ process_files() {
                     failed_files["$file"]=1
                 fi
 
-            elif [ -n "$has_audio" ] || [ $is_audio_file -eq 1 ]; then
+            else
                 echo ""
                 echo -e "${C_MAGENTA}${C_BOLD}┌─ [ 🎵 EXPORT Audio -> Social Media MP3 ] ─────────────────────────────────┐${C_RESET}"
                 echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_BOLD}File:${C_RESET}        $filename"
@@ -616,8 +646,6 @@ process_files() {
                     echo -e "  ${C_RED}${C_BOLD}[❌ ERROR]${C_RESET} Conversion of audio '$filename' failed."
                     failed_files["$file"]=1
                 fi
-            else
-                echo -e "${C_DIM}[SKIP] File '$filename' is not a supported video or audio format.${C_RESET}"
             fi
         done
 
