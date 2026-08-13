@@ -177,30 +177,27 @@ probe_media() {
     PROBE_HAS_AUDIO=0
     PROBE_IS_ATTACHED_PIC=0
 
-    local raw_data
-    raw_data=$(ffprobe -v error -show_entries stream=codec_name,codec_type,width,height,pix_fmt,r_frame_rate -of csv=p=0 "$f" 2>/dev/null)
-    [ -z "$raw_data" ] && return 1
+    [ ! -f "$f" ] && return 1
 
-    while IFS=',' read -r col_codec col_type col_w col_h col_pix col_fps; do
-        if [ "$col_type" == "video" ]; then
-            ((PROBE_HAS_VIDEO++))
-            [ -z "$PROBE_V_CODEC" ] && PROBE_V_CODEC="$col_codec"
-            [ "$col_w" -gt 0 ] 2>/dev/null && PROBE_WIDTH="$col_w"
-            [ "$col_h" -gt 0 ] 2>/dev/null && PROBE_HEIGHT="$col_h"
-            [ -n "$col_pix" ] && [ "$PROBE_PIX_FMT" == "" ] && PROBE_PIX_FMT="$col_pix"
-            if [ -n "$col_fps" ]; then
-                PROBE_FPS=$(awk -F"/" '{if ($2>0) print int($1/$2); else print int($1)}' <<< "$col_fps")
-            fi
-        elif [ "$col_type" == "audio" ]; then
-            ((PROBE_HAS_AUDIO++))
-            [ -z "$PROBE_A_CODEC" ] && PROBE_A_CODEC="$col_codec"
+    local v_info
+    v_info=$(ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height,pix_fmt,r_frame_rate -show_entries stream_disposition=attached_pic -of csv=p=0 "$f" 2>/dev/null | head -n1)
+    
+    if [ -n "$v_info" ]; then
+        PROBE_HAS_VIDEO=1
+        IFS=',' read -r PROBE_V_CODEC PROBE_WIDTH PROBE_HEIGHT PROBE_PIX_FMT raw_fps PROBE_IS_ATTACHED_PIC <<< "$v_info"
+        PROBE_WIDTH=${PROBE_WIDTH:-0}
+        PROBE_HEIGHT=${PROBE_HEIGHT:-0}
+        PROBE_IS_ATTACHED_PIC=${PROBE_IS_ATTACHED_PIC:-0}
+        if [ -n "$raw_fps" ]; then
+            PROBE_FPS=$(awk -F'/' '{if ($2>0) print int($1/$2); else print int($1)}' <<< "$raw_fps")
         fi
-    done <<< "$raw_data"
+    fi
 
-    if [ $PROBE_HAS_VIDEO -gt 0 ]; then
-        local att
-        att=$(ffprobe -v error -select_streams v:0 -show_entries stream_disposition=attached_pic -of csv=p=0 "$f" 2>/dev/null | head -n1 | cut -d, -f2)
-        [ "$att" == "1" ] && PROBE_IS_ATTACHED_PIC=1
+    local a_info
+    a_info=$(ffprobe -v error -select_streams a:0 -show_entries stream=codec_name -of csv=p=0 "$f" 2>/dev/null | head -n1)
+    if [ -n "$a_info" ]; then
+        PROBE_HAS_AUDIO=1
+        PROBE_A_CODEC=$(cut -d',' -f1 <<< "$a_info")
     fi
 
     return 0
@@ -226,13 +223,13 @@ classify_file() {
     fi
 
     local is_video_file=0
-    if [ $PROBE_HAS_VIDEO -gt 0 ] && [ $PROBE_IS_ATTACHED_PIC -eq 0 ] && [ $is_audio_ext -eq 0 ]; then
+    if [ "${PROBE_HAS_VIDEO:-0}" -gt 0 ] && [ "${PROBE_IS_ATTACHED_PIC:-0}" -eq 0 ] && [ $is_audio_ext -eq 0 ]; then
         is_video_file=1
     fi
 
     # 1. Test STATE_DAVINCI_READY
     if [ $is_video_file -eq 1 ]; then
-        if [[ "$PROBE_V_CODEC" =~ ^(prores|dnxhd|dnxhr|cineform|rawvideo|mjpeg)$ ]] && [[ "$PROBE_A_CODEC" == pcm_* || $PROBE_HAS_AUDIO -eq 0 ]]; then
+        if [[ "$PROBE_V_CODEC" =~ ^(prores|dnxhd|dnxhr|cineform|rawvideo|mjpeg)$ ]] && [[ "$PROBE_A_CODEC" == pcm_* || "${PROBE_HAS_AUDIO:-0}" -eq 0 ]]; then
             echo "STATE_DAVINCI_READY"
             return
         fi
@@ -245,7 +242,7 @@ classify_file() {
 
     # 2. Test STATE_SOCIAL_READY
     if [ $is_video_file -eq 1 ]; then
-        if [ "$PROBE_V_CODEC" == "h264" ] && [ "$PROBE_PIX_FMT" == "yuv420p" ] && [[ "$PROBE_A_CODEC" == "aac" || "$PROBE_A_CODEC" == "mp3" || $PROBE_HAS_AUDIO -eq 0 ]] && [ "$ext_lower" == "mp4" ]; then
+        if [ "$PROBE_V_CODEC" == "h264" ] && [ "$PROBE_PIX_FMT" == "yuv420p" ] && [[ "$PROBE_A_CODEC" == "aac" || "$PROBE_A_CODEC" == "mp3" || "${PROBE_HAS_AUDIO:-0}" -eq 0 ]] && [ "$ext_lower" == "mp4" ]; then
             echo "STATE_SOCIAL_READY"
             return
         fi
@@ -257,7 +254,7 @@ classify_file() {
     fi
 
     # 3. Test STATE_RAW_IMPORT (Any raw video/audio requiring conversion)
-    if [ $is_video_file -eq 1 ] || [ $PROBE_HAS_AUDIO -gt 0 ] || [ $is_audio_ext -eq 1 ]; then
+    if [ $is_video_file -eq 1 ] || [ "${PROBE_HAS_AUDIO:-0}" -gt 0 ] || [ $is_audio_ext -eq 1 ]; then
         echo "STATE_RAW_IMPORT"
         return
     fi
@@ -425,9 +422,9 @@ process_files() {
             fi
 
             # State = STATE_RAW_IMPORT (Prepare for DaVinci)
-            if [ $PROBE_HAS_VIDEO -gt 0 ] && [ $PROBE_IS_ATTACHED_PIC -eq 0 ]; then
-                max_dim=$PROBE_WIDTH
-                [ "$PROBE_HEIGHT" -gt "$max_dim" ] && max_dim=$PROBE_HEIGHT
+            if [ "${PROBE_HAS_VIDEO:-0}" -gt 0 ] && [ "${PROBE_IS_ATTACHED_PIC:-0}" -eq 0 ]; then
+                max_dim=${PROBE_WIDTH:-0}
+                [ "${PROBE_HEIGHT:-0}" -gt "$max_dim" ] && max_dim=$PROBE_HEIGHT
 
                 prores_prof=1
                 label="1080p"
@@ -541,9 +538,9 @@ process_files() {
             fi
 
             # State = STATE_DAVINCI_READY (Exported ProRes MOV / WAV from DaVinci -> Convert to Social Media MP4/MP3)
-            if [ $PROBE_HAS_VIDEO -gt 0 ] && [ $PROBE_IS_ATTACHED_PIC -eq 0 ]; then
-                max_dim=$PROBE_WIDTH
-                [ "$PROBE_HEIGHT" -gt "$max_dim" ] && max_dim=$PROBE_HEIGHT
+            if [ "${PROBE_HAS_VIDEO:-0}" -gt 0 ] && [ "${PROBE_IS_ATTACHED_PIC:-0}" -eq 0 ]; then
+                max_dim=${PROBE_WIDTH:-0}
+                [ "${PROBE_HEIGHT:-0}" -gt "$max_dim" ] && max_dim=$PROBE_HEIGHT
 
                 target_bitrate="12M"
                 label="Full HD (1080p)"
