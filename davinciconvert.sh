@@ -516,14 +516,7 @@ process_files() {
 
             classify_file "$file"
 
-            if [ "$PROBE_STATE" == "STATE_RAW_IMPORT" ]; then
-                echo ""
-                echo -e "${C_YELLOW}${C_BOLD}[🔀 SMART ROUTE]${C_RESET} '$filename' appears to be raw video/audio. Moving to 1_IMPORT..."
-                safe_move "$file" "$IMPORT_DIR"
-                ((pass_processed++))
-                ((total_processed++))
-                continue
-            elif [ "$PROBE_STATE" == "STATE_SOCIAL_READY" ]; then
+            if [ "$PROBE_STATE" == "STATE_SOCIAL_READY" ]; then
                 echo ""
                 echo -e "${C_CYAN}${C_BOLD}[⏩ SMART BYPASS]${C_RESET} '$filename' is ALREADY converted for Social Media! Moving to 3_FINAL_SOCIAL..."
                 safe_move "$file" "$FINAL_DIR"
@@ -539,7 +532,7 @@ process_files() {
                 continue
             fi
 
-            # State = STATE_DAVINCI_READY (Exported ProRes MOV / WAV from DaVinci -> Convert to Social Media MP4/MP3)
+            # Any file in 2_EXPORT (ProRes MOV, HEVC MP4, MKV, WebM) is converted to H.264 MP4 for Social Media
             if [ "${PROBE_HAS_VIDEO:-0}" -gt 0 ] && [ "${PROBE_IS_ATTACHED_PIC:-0}" -eq 0 ]; then
                 max_dim=${PROBE_WIDTH:-0}
                 [ "${PROBE_HEIGHT:-0}" -gt "$max_dim" ] && max_dim=$PROBE_HEIGHT
