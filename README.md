@@ -170,7 +170,8 @@ To record footage directly in a native DaVinci-compatible format on Linux withou
 3. Set **Container Format** to `mov`.
 4. Set **Video Encoder** to `dnxhd` (or `prores_ks`).
 5. Set **Audio Encoder** to `pcm_s16le` (or `pcm_s24le`).
-[GUIDE](https://youtu.be/3Bo0fqk7jP0?t=141)
+
+[GUIDE](https://youtu.be/3Bo0fqk7jP0?t=120)
 
 ---
 
