@@ -215,8 +215,9 @@ process_files() {
             [ -f "$file" ] || continue
 
             filename=$(basename -- "$file")
-            name="${filename%.*}"
-            ext="${filename##*.}"
+            clean_filename=$(sed -E 's/ \([0-9]+\)$//' <<< "$filename")
+            name="${clean_filename%.*}"
+            ext="${clean_filename##*.}"
             ext_lower=$(tr '[:upper:]' '[:lower:]' <<< "$ext")
 
             [[ "$filename" == .* ]] && continue
@@ -256,8 +257,9 @@ process_files() {
             [ -f "$file" ] || continue
 
             filename=$(basename -- "$file")
-            name="${filename%.*}"
-            ext="${filename##*.}"
+            clean_filename=$(sed -E 's/ \([0-9]+\)$//' <<< "$filename")
+            name="${clean_filename%.*}"
+            ext="${clean_filename##*.}"
             ext_lower=$(tr '[:upper:]' '[:lower:]' <<< "$ext")
 
             [[ "$filename" == .* ]] && continue
@@ -296,8 +298,9 @@ process_files() {
             [ -f "$file" ] || continue
 
             filename=$(basename -- "$file")
-            name="${filename%.*}"
-            ext="${filename##*.}"
+            clean_filename=$(sed -E 's/ \([0-9]+\)$//' <<< "$filename")
+            name="${clean_filename%.*}"
+            ext="${clean_filename##*.}"
             ext_lower=$(tr '[:upper:]' '[:lower:]' <<< "$ext")
 
             # Skip hidden & temporary downloading files (.part, .crdownload, .tmp, .ytdl...)
@@ -314,7 +317,7 @@ process_files() {
 
             if [ -n "$has_video" ]; then
                 is_attached_pic=$(ffprobe -v error -select_streams v:0 -show_entries stream=disposition:attached_pic -of csv=p=0 "$file" 2>/dev/null | head -n1 | cut -d, -f2)
-                if [ "$is_attached_pic" == "1" ]; then
+                if [ "$is_attached_pic" == "1" ] || [ $is_audio_file -eq 1 ]; then
                     has_video=""
                     is_audio_file=1
                 fi
@@ -387,7 +390,7 @@ process_files() {
                 run_ffmpeg_with_progress "$file" "DaVinci Prep: $filename" "$out_mov" \
                     -threads 0 \
                     -y -i "$file" \
-                    -map 0:v? -map 0:a? -map_chapters 0 \
+                    -map "0:v?" -map "0:a?" -map_chapters 0 \
                     -c:v prores_ks -profile:v "$prores_prof" \
                     -c:a pcm_s16le "$out_mov"
 
@@ -436,8 +439,9 @@ process_files() {
             [ -f "$file" ] || continue
 
             filename=$(basename -- "$file")
-            name="${filename%.*}"
-            ext="${filename##*.}"
+            clean_filename=$(sed -E 's/ \([0-9]+\)$//' <<< "$filename")
+            name="${clean_filename%.*}"
+            ext="${clean_filename##*.}"
             ext_lower=$(tr '[:upper:]' '[:lower:]' <<< "$ext")
 
             # Skip hidden & temporary downloading files
@@ -454,7 +458,7 @@ process_files() {
 
             if [ -n "$has_video" ]; then
                 is_attached_pic=$(ffprobe -v error -select_streams v:0 -show_entries stream=disposition:attached_pic -of csv=p=0 "$file" 2>/dev/null | head -n1 | cut -d, -f2)
-                if [ "$is_attached_pic" == "1" ]; then
+                if [ "$is_attached_pic" == "1" ] || [ $is_audio_file -eq 1 ]; then
                     has_video=""
                     is_audio_file=1
                 fi
@@ -532,7 +536,7 @@ process_files() {
                 if [ "$ENCODER_MODE" == "NVENC" ]; then
                     run_ffmpeg_with_progress "$file" "NVIDIA Export: $filename" "$out_mp4" \
                         -y -i "$file" \
-                        -map 0:v? -map 0:a? -map_chapters 0 \
+                        -map "0:v?" -map "0:a?" -map_chapters 0 \
                         -c:v h264_nvenc -b:v "$target_bitrate" -pix_fmt yuv420p \
                         -c:a aac -b:a "$AUDIO_BITRATE" "$out_mp4"
                     ret=$?
@@ -540,7 +544,7 @@ process_files() {
                 elif [ "$ENCODER_MODE" == "QSV" ]; then
                     run_ffmpeg_with_progress "$file" "Intel QSV Export: $filename" "$out_mp4" \
                         -y -i "$file" \
-                        -map 0:v? -map 0:a? -map_chapters 0 \
+                        -map "0:v?" -map "0:a?" -map_chapters 0 \
                         -c:v h264_qsv -b:v "$target_bitrate" -pix_fmt yuv420p \
                         -c:a aac -b:a "$AUDIO_BITRATE" "$out_mp4"
                     ret=$?
@@ -549,7 +553,7 @@ process_files() {
                     run_ffmpeg_with_progress "$file" "AMD VAAPI Export: $filename" "$out_mp4" \
                         -vaapi_device /dev/dri/renderD128 \
                         -y -i "$file" \
-                        -map 0:v? -map 0:a? -map_chapters 0 \
+                        -map "0:v?" -map "0:a?" -map_chapters 0 \
                         -vf 'format=nv12,hwupload' \
                         -c:v h264_vaapi -b:v "$target_bitrate" \
                         -c:a aac -b:a "$AUDIO_BITRATE" "$out_mp4"
@@ -562,7 +566,7 @@ process_files() {
                     run_ffmpeg_with_progress "$file" "CPU Export: $filename" "$out_mp4" \
                         -threads 0 \
                         -y -i "$file" \
-                        -map 0:v? -map 0:a? -map_chapters 0 \
+                        -map "0:v?" -map "0:a?" -map_chapters 0 \
                         -c:v libx264 -preset "$CPU_PRESET" -b:v "$target_bitrate" -maxrate "$target_bitrate" -bufsize "28M" -pix_fmt yuv420p \
                         -c:a aac -b:a "$AUDIO_BITRATE" "$out_mp4"
                     ret=$?
