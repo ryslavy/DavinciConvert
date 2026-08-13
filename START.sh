@@ -146,7 +146,7 @@ echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Pracovní složka  :${C_RESET}
 if [ "$ENCODER_MODE" == "CPU" ]; then
     echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Režim akcelerace :${C_RESET} ${C_YELLOW}${C_BOLD}CPU (AMD / Intel Multi-Threading - $CPU_PRESET)${C_RESET}"
 else
-    echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Režim akcelerace :${C_RESET} ${C_GREEN}${C_BOLD}Hardware ($ENCODER_MODE GPU Acceleration)${C_RESET}"
+    echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Režim akcelerace :${C_RESET} ${C_GREEN}${C_BOLD}Hardware ($ENCODER_MODE GPU akcelerace)${C_RESET}"
 fi
 [ $ENABLE_ARCHIVE -eq 1 ] && echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Archivace originálů:${C_RESET} ${C_GREEN}${C_BOLD}ZAPNUTA (Přesouvám do ARCHIV/)${C_RESET}"
 echo -e "${C_CYAN}${C_BOLD}╚════════════════════════════════════════════════════════════════════════════════╝${C_RESET}"
@@ -553,7 +553,7 @@ process_files() {
                 fi
 
                 echo ""
-                echo -e "${C_MAGENTA}${C_BOLD}┌─ [ 📤 EXPORT -> Social Media MP4 ] ──────────────────────────────────────┐${C_RESET}"
+                echo -e "${C_MAGENTA}${C_BOLD}┌─ [ 📤 EXPORT -> MP4 pro sociální sítě ] ─────────────────────────────────┐${C_RESET}"
                 echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_BOLD}Soubor:${C_RESET}      $filename"
                 echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Formát:${C_RESET}      ${PROBE_WIDTH}x${PROBE_HEIGHT} ($label @ ${PROBE_FPS}FPS | Audio stop: $PROBE_HAS_AUDIO)"
                 echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Cílový kodek:${C_RESET} ${C_GREEN}${C_BOLD}H.264 MP4 (yuv420p | Bitrate: $target_bitrate)${C_RESET}"
@@ -566,7 +566,7 @@ process_files() {
                 local ret=1
 
                 if [ "$ENCODER_MODE" == "NVENC" ]; then
-                    run_ffmpeg_with_progress "$file" "NVIDIA Export: $filename" "$out_mp4" \
+                    run_ffmpeg_with_progress "$file" "NVIDIA export: $filename" "$out_mp4" \
                         -y -i "$file" \
                         -map "0:v?" -map "0:a?" -map_chapters 0 \
                         -c:v h264_nvenc -b:v "$target_bitrate" -pix_fmt yuv420p \
@@ -574,7 +574,7 @@ process_files() {
                     ret=$?
 
                 elif [ "$ENCODER_MODE" == "QSV" ]; then
-                    run_ffmpeg_with_progress "$file" "Intel QSV Export: $filename" "$out_mp4" \
+                    run_ffmpeg_with_progress "$file" "Intel QSV export: $filename" "$out_mp4" \
                         -y -i "$file" \
                         -map "0:v?" -map "0:a?" -map_chapters 0 \
                         -c:v h264_qsv -b:v "$target_bitrate" -pix_fmt yuv420p \
@@ -582,7 +582,7 @@ process_files() {
                     ret=$?
 
                 elif [ "$ENCODER_MODE" == "VAAPI" ]; then
-                    run_ffmpeg_with_progress "$file" "AMD VAAPI Export: $filename" "$out_mp4" \
+                    run_ffmpeg_with_progress "$file" "AMD VAAPI export: $filename" "$out_mp4" \
                         -vaapi_device /dev/dri/renderD128 \
                         -y -i "$file" \
                         -map "0:v?" -map "0:a?" -map_chapters 0 \
@@ -596,7 +596,7 @@ process_files() {
                 if [ $ret -ne 0 ]; then
                     [ "$ENCODER_MODE" != "CPU" ] && echo -e "  ${C_YELLOW}${C_BOLD}[INFO / FALLBACK]${C_RESET} Přepínám na CPU enkodér (AMD/Intel -threads 0)..."
                     
-                    run_ffmpeg_with_progress "$file" "CPU Export: $filename" "$out_mp4" \
+                    run_ffmpeg_with_progress "$file" "CPU export: $filename" "$out_mp4" \
                         -threads 0 \
                         -y -i "$file" \
                         -map "0:v?" -map "0:a?" -map_chapters 0 \
@@ -618,7 +618,7 @@ process_files() {
 
             else
                 echo ""
-                echo -e "${C_MAGENTA}${C_BOLD}┌─ [ 🎵 EXPORT Audio -> Social Media MP3 ] ─────────────────────────────────┐${C_RESET}"
+                echo -e "${C_MAGENTA}${C_BOLD}┌─ [ 🎵 EXPORT Audia -> MP3 pro sociální sítě ] ───────────────────────────┐${C_RESET}"
                 echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_BOLD}Soubor:${C_RESET}      $filename"
                 echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Cílový kodek:${C_RESET} ${C_GREEN}${C_BOLD}MP3 Audio ($AUDIO_BITRATE Bitrate)${C_RESET}"
                 echo -e "${C_MAGENTA}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
