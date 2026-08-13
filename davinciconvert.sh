@@ -235,7 +235,8 @@ process_files() {
             if [[ "$ext_lower" =~ ^(mp3|wav|flac|aac|m4a|ogg|opus|wma|aiff|ac3)$ ]]; then is_audio_file=1; fi
 
             is_social_ready=0
-            if [ -n "$has_video" ] && [ $is_audio_file -eq 0 ] && [ "$v_codec" == "h264" ] && [ "$pix_fmt" == "yuv420p" ] && [[ "$a_codec" == "aac" || "$a_codec" == "mp3" ]] && [ "$ext_lower" == "mp4" ]; then
+            # Videos without audio stream (-z "$has_audio") are also social ready if H.264 yuv420p MP4
+            if [ -n "$has_video" ] && [ $is_audio_file -eq 0 ] && [ "$v_codec" == "h264" ] && [ "$pix_fmt" == "yuv420p" ] && [[ "$a_codec" == "aac" || "$a_codec" == "mp3" || -z "$has_audio" ]] && [ "$ext_lower" == "mp4" ]; then
                 is_social_ready=1
             elif [ $is_audio_file -eq 1 ] && [ "$a_codec" == "mp3" ] && [ "$ext_lower" == "mp3" ]; then
                 is_social_ready=1
@@ -304,6 +305,7 @@ process_files() {
             filename=$(basename -- "$file")
             clean_filename=$(sed -E 's/ \([0-9]+\)$//' <<< "$filename")
             name="${filename%.*}"
+            base_name=$(sed -E 's/_davinci$//; s/_social$//' <<< "$name")
             ext="${clean_filename##*.}"
             ext_lower=$(tr '[:upper:]' '[:lower:]' <<< "$ext")
 
@@ -390,7 +392,7 @@ process_files() {
                 echo -e "${C_YELLOW}${C_BOLD}│${C_RESET} ${C_DIM}Target Codec:${C_RESET} ${C_GREEN}${C_BOLD}Apple ProRes 422 MOV + Uncompressed PCM Audio${C_RESET}"
                 echo -e "${C_YELLOW}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
 
-                local out_mov="$DAVINCI_DIR/${name}_davinci.mov"
+                local out_mov="$DAVINCI_DIR/${base_name}_davinci.mov"
                 run_ffmpeg_with_progress "$file" "DaVinci Prep: $filename" "$out_mov" \
                     -threads 0 \
                     -y -i "$file" \
@@ -401,7 +403,7 @@ process_files() {
                 local ret=$?
                 if [ $ret -eq 0 ] && [ -s "$out_mov" ]; then
                     handle_original_file "$file"
-                    echo -e "  ${C_GREEN}${C_BOLD}[✅ SAVED]${C_RESET} 1_PRORES_DAVINCI/${name}_davinci.mov"
+                    echo -e "  ${C_GREEN}${C_BOLD}[✅ SAVED]${C_RESET} 1_PRORES_DAVINCI/${base_name}_davinci.mov"
                     ((pass_processed++))
                     ((total_processed++))
                     ((import_processed++))
@@ -417,7 +419,7 @@ process_files() {
                 echo -e "${C_YELLOW}${C_BOLD}│${C_RESET} ${C_DIM}Target Codec:${C_RESET} ${C_GREEN}${C_BOLD}WAV / Uncompressed PCM 48kHz${C_RESET}"
                 echo -e "${C_YELLOW}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
 
-                local out_wav="$DAVINCI_DIR/${name}_davinci.wav"
+                local out_wav="$DAVINCI_DIR/${base_name}_davinci.wav"
                 run_ffmpeg_with_progress "$file" "DaVinci Audio Prep: $filename" "$out_wav" \
                     -vn -y -i "$file" \
                     -c:a pcm_s16le -ar 48000 "$out_wav"
@@ -425,7 +427,7 @@ process_files() {
                 local ret=$?
                 if [ $ret -eq 0 ] && [ -s "$out_wav" ]; then
                     handle_original_file "$file"
-                    echo -e "  ${C_GREEN}${C_BOLD}[✅ SAVED]${C_RESET} 1_PRORES_DAVINCI/${name}_davinci.wav"
+                    echo -e "  ${C_GREEN}${C_BOLD}[✅ SAVED]${C_RESET} 1_PRORES_DAVINCI/${base_name}_davinci.wav"
                     ((pass_processed++))
                     ((total_processed++))
                     ((import_processed++))
@@ -448,6 +450,7 @@ process_files() {
             filename=$(basename -- "$file")
             clean_filename=$(sed -E 's/ \([0-9]+\)$//' <<< "$filename")
             name="${filename%.*}"
+            base_name=$(sed -E 's/_davinci$//; s/_social$//' <<< "$name")
             ext="${clean_filename##*.}"
             ext_lower=$(tr '[:upper:]' '[:lower:]' <<< "$ext")
 
@@ -485,8 +488,8 @@ process_files() {
                 continue
             fi
 
-            # SMART PROTECTION 2B: File in 2_EXPORT is ALREADY a social-media-ready H.264/AAC MP4 in yuv420p
-            if [ -n "$has_video" ] && [ $is_audio_file -eq 0 ] && [ "$v_codec" == "h264" ] && [ "$pix_fmt" == "yuv420p" ] && [[ "$a_codec" == "aac" || "$a_codec" == "mp3" ]] && [ "$ext_lower" == "mp4" ]; then
+            # SMART PROTECTION 2B: File in 2_EXPORT is ALREADY a social-media-ready H.264/AAC MP4 in yuv420p (including silent videos)
+            if [ -n "$has_video" ] && [ $is_audio_file -eq 0 ] && [ "$v_codec" == "h264" ] && [ "$pix_fmt" == "yuv420p" ] && [[ "$a_codec" == "aac" || "$a_codec" == "mp3" || -z "$has_audio" ]] && [ "$ext_lower" == "mp4" ]; then
                 echo ""
                 echo -e "${C_CYAN}${C_BOLD}[⏩ SMART BYPASS]${C_RESET} '$filename' is ALREADY converted for Social Media! Moving..."
                 mv "$file" "$FINAL_DIR/$filename"
@@ -537,7 +540,7 @@ process_files() {
                 echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Encoder Mode:${C_RESET} $ENCODER_MODE"
                 echo -e "${C_MAGENTA}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
 
-                local out_mp4="$FINAL_DIR/${name}_social.mp4"
+                local out_mp4="$FINAL_DIR/${base_name}_social.mp4"
                 local ret=1
 
                 if [ "$ENCODER_MODE" == "NVENC" ]; then
@@ -581,7 +584,7 @@ process_files() {
 
                 if [ $ret -eq 0 ] && [ -s "$out_mp4" ]; then
                     handle_original_file "$file"
-                    echo -e "  ${C_GREEN}${C_BOLD}[✅ SAVED]${C_RESET} 3_FINAL_SOCIAL/${name}_social.mp4"
+                    echo -e "  ${C_GREEN}${C_BOLD}[✅ SAVED]${C_RESET} 3_FINAL_SOCIAL/${base_name}_social.mp4"
                     ((pass_processed++))
                     ((total_processed++))
                     ((export_processed++))
@@ -597,7 +600,7 @@ process_files() {
                 echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Target Codec:${C_RESET} ${C_GREEN}${C_BOLD}MP3 Audio ($AUDIO_BITRATE Bitrate)${C_RESET}"
                 echo -e "${C_MAGENTA}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
 
-                local out_mp3="$FINAL_DIR/${name}_social.mp3"
+                local out_mp3="$FINAL_DIR/${base_name}_social.mp3"
                 run_ffmpeg_with_progress "$file" "Export MP3: $filename" "$out_mp3" \
                     -vn -y -i "$file" \
                     -c:a libmp3lame -b:a "$AUDIO_BITRATE" "$out_mp3"
@@ -605,7 +608,7 @@ process_files() {
                 local ret=$?
                 if [ $ret -eq 0 ] && [ -s "$out_mp3" ]; then
                     handle_original_file "$file"
-                    echo -e "  ${C_GREEN}${C_BOLD}[✅ SAVED]${C_RESET} 3_FINAL_SOCIAL/${name}_social.mp3"
+                    echo -e "  ${C_GREEN}${C_BOLD}[✅ SAVED]${C_RESET} 3_FINAL_SOCIAL/${base_name}_social.mp3"
                     ((pass_processed++))
                     ((total_processed++))
                     ((export_processed++))
