@@ -134,15 +134,15 @@ send_notification() {
 }
 
 detect_best_encoder() {
-    if ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc=duration=1:size=64x64 -c:v h264_nvenc -f null - >/dev/null 2>&1; then
+    if ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc=duration=1:size=128x128 -c:v h264_nvenc -f null - >/dev/null 2>&1; then
         echo "NVENC"
         return
     fi
-    if ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc=duration=1:size=64x64 -c:v h264_qsv -f null - >/dev/null 2>&1; then
+    if ffmpeg -hide_banner -loglevel error -y -f lavfi -i testsrc=duration=1:size=128x128 -c:v h264_qsv -f null - >/dev/null 2>&1; then
         echo "QSV"
         return
     fi
-    if [ -e "/dev/dri/renderD128" ] && ffmpeg -hide_banner -loglevel error -vaapi_device /dev/dri/renderD128 -y -f lavfi -i testsrc=duration=1:size=64x64 -vf 'format=nv12,hwupload' -c:v h264_vaapi -f null - >/dev/null 2>&1; then
+    if [ -e "/dev/dri/renderD128" ] && ffmpeg -hide_banner -loglevel error -vaapi_device /dev/dri/renderD128 -y -f lavfi -i testsrc=duration=1:size=128x128 -vf 'format=nv12,hwupload' -c:v h264_vaapi -f null - >/dev/null 2>&1; then
         echo "VAAPI"
         return
     fi
