@@ -23,14 +23,14 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 cd "$DIR" || exit 1
 
 # Auto-launch terminal window if double-clicked from file manager
-if [ ! -t 1 ] && [ -n "$DISPLAY" -o -n "$WAYLAND_DISPLAY" ]; then
+if [ -z "$DAVINCICONVERT_HEADLESS" ] && [ ! -t 0 ] && [ ! -t 1 ] && [ -n "$DISPLAY" -o -n "$WAYLAND_DISPLAY" ]; then
     for term in gnome-terminal konsole xfce4-terminal kitty alacritty xterm x-terminal-emulator; do
         if command -v $term >/dev/null 2>&1; then
             case $term in
-                gnome-terminal) exec gnome-terminal -- title "DavinciConvert" -- bash -c "$0 $*; echo ''; read -p 'Press Enter to exit...'" ;;
-                konsole) exec konsole --title "DavinciConvert" -e bash -c "$0 $*; echo ''; read -p 'Press Enter to exit...'" ;;
-                xfce4-terminal) exec xfce4-terminal -T "DavinciConvert" -e "bash -c \"$0 $*; echo ''; read -p 'Press Enter to exit...'\"" ;;
-                *) exec $term -e bash -c "$0 $*; echo ''; read -p 'Press Enter to exit...'" ;;
+                gnome-terminal) exec gnome-terminal -- title "DavinciConvert" -- bash -c "DAVINCICONVERT_HEADLESS=1 '$0' $*; echo ''; read -p 'Press Enter to exit...'" ;;
+                konsole) exec konsole --title "DavinciConvert" -e bash -c "DAVINCICONVERT_HEADLESS=1 '$0' $*; echo ''; read -p 'Press Enter to exit...'" ;;
+                xfce4-terminal) exec xfce4-terminal -T "DavinciConvert" -e "bash -c \"DAVINCICONVERT_HEADLESS=1 '$0' $*; echo ''; read -p 'Press Enter to exit...'\"" ;;
+                *) exec $term -e bash -c "DAVINCICONVERT_HEADLESS=1 '$0' $*; echo ''; read -p 'Press Enter to exit...'" ;;
             esac
             exit 0
         fi
@@ -264,6 +264,26 @@ classify_file() {
     return 1
 }
 
+# Generate unique path during filename collision
+get_unique_path() {
+    local target="$1"
+    if [ -f "$target" ]; then
+        local dir
+        dir=$(dirname -- "$target")
+        local fn
+        fn=$(basename -- "$target")
+        local name="${fn%.*}"
+        local ext="${fn##*.}"
+        local counter=1
+        while [ -f "$dir/${name}_${counter}.${ext}" ]; do
+            ((counter++))
+        done
+        echo "$dir/${name}_${counter}.${ext}"
+    else
+        echo "$target"
+    fi
+}
+
 # Collision-safe move function to prevent overwriting files with identical names
 safe_move() {
     local src="$1"
@@ -275,13 +295,7 @@ safe_move() {
     
     local target="$dst_dir/$fn"
     if [ -f "$target" ] && [ "$src" != "$target" ]; then
-        local name="${fn%.*}"
-        local ext="${fn##*.}"
-        local counter=1
-        while [ -f "$dst_dir/${name}_${counter}.${ext}" ]; do
-            ((counter++))
-        done
-        target="$dst_dir/${name}_${counter}.${ext}"
+        target=$(get_unique_path "$target")
     fi
 
     [ "$src" != "$target" ] && mv "$src" "$target"
@@ -408,13 +422,6 @@ process_files() {
                 ((total_processed++))
                 ((import_processed++))
                 continue
-            elif [ "$PROBE_STATE" == "STATE_SOCIAL_READY" ]; then
-                echo ""
-                echo -e "${C_CYAN}${C_BOLD}[⏩ SMART BYPASS]${C_RESET} '$filename' is ALREADY converted for Social Media! Moving to 3_FINAL_SOCIAL..."
-                safe_move "$file" "$FINAL_DIR"
-                ((pass_processed++))
-                ((total_processed++))
-                continue
             elif [ "$PROBE_STATE" == "STATE_INVALID" ]; then
                 echo ""
                 echo -e "${C_RED}${C_BOLD}[🛑 CORRUPTED FILE]${C_RESET} '$filename' is corrupted or unreadable. Moving to CORRUPTED/..."
@@ -423,7 +430,7 @@ process_files() {
                 continue
             fi
 
-            # State = STATE_RAW_IMPORT (Prepare for DaVinci)
+            # All files placed in 1_IMPORT (raw videos & raw audio MP3/FLAC) are converted for DaVinci
             if [ "${PROBE_HAS_VIDEO:-0}" -gt 0 ] && [ "${PROBE_IS_ATTACHED_PIC:-0}" -eq 0 ]; then
                 max_dim=${PROBE_WIDTH:-0}
                 [ "${PROBE_HEIGHT:-0}" -gt "$max_dim" ] && max_dim=$PROBE_HEIGHT
@@ -451,6 +458,8 @@ process_files() {
                 echo -e "${C_YELLOW}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
 
                 local out_mov="$DAVINCI_DIR/${base_name}_davinci.mov"
+                out_mov=$(get_unique_path "$out_mov")
+
                 run_ffmpeg_with_progress "$file" "DaVinci Prep: $filename" "$out_mov" \
                     -threads 0 \
                     -y -i "$file" \
@@ -461,7 +470,7 @@ process_files() {
                 local ret=$?
                 if [ $ret -eq 0 ] && [ -s "$out_mov" ]; then
                     handle_original_file "$file"
-                    echo -e "  ${C_GREEN}${C_BOLD}[✅ SAVED]${C_RESET} 1_PRORES_DAVINCI/${base_name}_davinci.mov"
+                    echo -e "  ${C_GREEN}${C_BOLD}[✅ SAVED]${C_RESET} 1_PRORES_DAVINCI/$(basename -- "$out_mov")"
                     ((pass_processed++))
                     ((total_processed++))
                     ((import_processed++))
@@ -478,6 +487,8 @@ process_files() {
                 echo -e "${C_YELLOW}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
 
                 local out_wav="$DAVINCI_DIR/${base_name}_davinci.wav"
+                out_wav=$(get_unique_path "$out_wav")
+
                 run_ffmpeg_with_progress "$file" "DaVinci Audio Prep: $filename" "$out_wav" \
                     -vn -y -i "$file" \
                     -c:a pcm_s16le -ar 48000 "$out_wav"
@@ -485,7 +496,7 @@ process_files() {
                 local ret=$?
                 if [ $ret -eq 0 ] && [ -s "$out_wav" ]; then
                     handle_original_file "$file"
-                    echo -e "  ${C_GREEN}${C_BOLD}[✅ SAVED]${C_RESET} 1_PRORES_DAVINCI/${base_name}_davinci.wav"
+                    echo -e "  ${C_GREEN}${C_BOLD}[✅ SAVED]${C_RESET} 1_PRORES_DAVINCI/$(basename -- "$out_wav")"
                     ((pass_processed++))
                     ((total_processed++))
                     ((import_processed++))
@@ -563,6 +574,8 @@ process_files() {
                 echo -e "${C_MAGENTA}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
 
                 local out_mp4="$FINAL_DIR/${base_name}_social.mp4"
+                out_mp4=$(get_unique_path "$out_mp4")
+
                 local ret=1
 
                 if [ "$ENCODER_MODE" == "NVENC" ]; then
@@ -606,7 +619,7 @@ process_files() {
 
                 if [ $ret -eq 0 ] && [ -s "$out_mp4" ]; then
                     handle_original_file "$file"
-                    echo -e "  ${C_GREEN}${C_BOLD}[✅ SAVED]${C_RESET} 3_FINAL_SOCIAL/${base_name}_social.mp4"
+                    echo -e "  ${C_GREEN}${C_BOLD}[✅ SAVED]${C_RESET} 3_FINAL_SOCIAL/$(basename -- "$out_mp4")"
                     ((pass_processed++))
                     ((total_processed++))
                     ((export_processed++))
@@ -623,6 +636,8 @@ process_files() {
                 echo -e "${C_MAGENTA}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
 
                 local out_mp3="$FINAL_DIR/${base_name}_social.mp3"
+                out_mp3=$(get_unique_path "$out_mp3")
+
                 run_ffmpeg_with_progress "$file" "Export MP3: $filename" "$out_mp3" \
                     -vn -y -i "$file" \
                     -c:a libmp3lame -b:a "$AUDIO_BITRATE" "$out_mp3"
@@ -630,7 +645,7 @@ process_files() {
                 local ret=$?
                 if [ $ret -eq 0 ] && [ -s "$out_mp3" ]; then
                     handle_original_file "$file"
-                    echo -e "  ${C_GREEN}${C_BOLD}[✅ SAVED]${C_RESET} 3_FINAL_SOCIAL/${base_name}_social.mp3"
+                    echo -e "  ${C_GREEN}${C_BOLD}[✅ SAVED]${C_RESET} 3_FINAL_SOCIAL/$(basename -- "$out_mp3")"
                     ((pass_processed++))
                     ((total_processed++))
                     ((export_processed++))
@@ -675,8 +690,8 @@ else
     echo -e " ${C_BOLD}✨ All tasks completed.${C_RESET}"
     echo -e "${C_CYAN}${C_BOLD}==========================================================================${C_RESET}"
 
-    # Pause before exiting if opened via Desktop Launcher or GUI terminal
-    if [ -t 0 ] || [ -n "$DISPLAY" -o -n "$WAYLAND_DISPLAY" ]; then
+    # Pause before exiting if opened interactively in terminal TTY
+    if [ -t 0 ] && [ -z "$DAVINCICONVERT_HEADLESS" ]; then
         echo ""
         read -p "Press Enter to exit..." || true
     fi

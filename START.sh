@@ -10,14 +10,14 @@ DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
 cd "$DIR" || exit 1
 
 # Automatické otevření terminálového okna při dvojkliku z grafického rozhraní
-if [ ! -t 1 ] && [ -n "$DISPLAY" -o -n "$WAYLAND_DISPLAY" ]; then
+if [ -z "$DAVINCICONVERT_HEADLESS" ] && [ ! -t 0 ] && [ ! -t 1 ] && [ -n "$DISPLAY" -o -n "$WAYLAND_DISPLAY" ]; then
     for term in gnome-terminal konsole xfce4-terminal kitty alacritty xterm x-terminal-emulator; do
         if command -v $term >/dev/null 2>&1; then
             case $term in
-                gnome-terminal) exec gnome-terminal -- title "DavinciConvert" -- bash -c "$0 $*; echo ''; read -p 'Stiskněte Enter pro ukončení...'" ;;
-                konsole) exec konsole --title "DavinciConvert" -e bash -c "$0 $*; echo ''; read -p 'Stiskněte Enter pro ukončení...'" ;;
-                xfce4-terminal) exec xfce4-terminal -T "DavinciConvert" -e "bash -c \"$0 $*; echo ''; read -p 'Stiskněte Enter pro ukončení...'\"" ;;
-                *) exec $term -e bash -c "$0 $*; echo ''; read -p 'Stiskněte Enter pro ukončení...'" ;;
+                gnome-terminal) exec gnome-terminal -- title "DavinciConvert" -- bash -c "DAVINCICONVERT_HEADLESS=1 '$0' $*; echo ''; read -p 'Stiskněte Enter pro ukončení...'" ;;
+                konsole) exec konsole --title "DavinciConvert" -e bash -c "DAVINCICONVERT_HEADLESS=1 '$0' $*; echo ''; read -p 'Stiskněte Enter pro ukončení...'" ;;
+                xfce4-terminal) exec xfce4-terminal -T "DavinciConvert" -e "bash -c \"DAVINCICONVERT_HEADLESS=1 '$0' $*; echo ''; read -p 'Stiskněte Enter pro ukončení...'\"" ;;
+                *) exec $term -e bash -c "DAVINCICONVERT_HEADLESS=1 '$0' $*; echo ''; read -p 'Stiskněte Enter pro ukončení...'" ;;
             esac
             exit 0
         fi
@@ -251,6 +251,26 @@ classify_file() {
     return 1
 }
 
+# Generování unikátního cesty souboru při kolizi názvů
+get_unique_path() {
+    local target="$1"
+    if [ -f "$target" ]; then
+        local dir
+        dir=$(dirname -- "$target")
+        local fn
+        fn=$(basename -- "$target")
+        local name="${fn%.*}"
+        local ext="${fn##*.}"
+        local counter=1
+        while [ -f "$dir/${name}_${counter}.${ext}" ]; do
+            ((counter++))
+        done
+        echo "$dir/${name}_${counter}.${ext}"
+    else
+        echo "$target"
+    fi
+}
+
 # Bezpečný přesun bez rizika přepsání souboru se stejným názvem
 safe_move() {
     local src="$1"
@@ -262,13 +282,7 @@ safe_move() {
     
     local target="$dst_dir/$fn"
     if [ -f "$target" ] && [ "$src" != "$target" ]; then
-        local name="${fn%.*}"
-        local ext="${fn##*.}"
-        local counter=1
-        while [ -f "$dst_dir/${name}_${counter}.${ext}" ]; do
-            ((counter++))
-        done
-        target="$dst_dir/${name}_${counter}.${ext}"
+        target=$(get_unique_path "$target")
     fi
 
     [ "$src" != "$target" ] && mv "$src" "$target"
@@ -395,13 +409,6 @@ process_files() {
                 ((total_processed++))
                 ((import_processed++))
                 continue
-            elif [ "$PROBE_STATE" == "STATE_SOCIAL_READY" ]; then
-                echo ""
-                echo -e "${C_CYAN}${C_BOLD}[⏩ CHYTRÝ BYPASS]${C_RESET} '$filename' již JE v H.264/MP3 pro sociální sítě. Přesouvám do HOTOVO..."
-                safe_move "$file" "$FINAL_DIR"
-                ((pass_processed++))
-                ((total_processed++))
-                continue
             elif [ "$PROBE_STATE" == "STATE_INVALID" ]; then
                 echo ""
                 echo -e "${C_RED}${C_BOLD}[🛑 POŠKOZENÝ SOUBOR]${C_RESET} Soubor '$filename' je poškozený nebo nečitelný. Přesouvám do POŠKOZENÉ/..."
@@ -410,7 +417,7 @@ process_files() {
                 continue
             fi
 
-            # Stav = STATE_RAW_IMPORT (Zpracujeme převod pro DaVinci)
+            # Všechny soubory ve složce 1_IMPORT (surová videa i audia MP3/FLAC) konvertujeme pro DaVinci
             if [ "${PROBE_HAS_VIDEO:-0}" -gt 0 ] && [ "${PROBE_IS_ATTACHED_PIC:-0}" -eq 0 ]; then
                 max_dim=${PROBE_WIDTH:-0}
                 [ "${PROBE_HEIGHT:-0}" -gt "$max_dim" ] && max_dim=$PROBE_HEIGHT
@@ -438,6 +445,8 @@ process_files() {
                 echo -e "${C_YELLOW}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
                 
                 local out_mov="$DAVINCI_DIR/${base_name}_davinci.mov"
+                out_mov=$(get_unique_path "$out_mov")
+
                 run_ffmpeg_with_progress "$file" "Příprava pro DaVinci: $filename" "$out_mov" \
                     -threads 0 \
                     -y -i "$file" \
@@ -448,7 +457,7 @@ process_files() {
                 local ret=$?
                 if [ $ret -eq 0 ] && [ -s "$out_mov" ]; then
                     handle_original_file "$file"
-                    echo -e "  ${C_GREEN}${C_BOLD}[✅ ULOŽENO]${C_RESET} 1_PRORES_DAVINCI/${base_name}_davinci.mov"
+                    echo -e "  ${C_GREEN}${C_BOLD}[✅ ULOŽENO]${C_RESET} 1_PRORES_DAVINCI/$(basename -- "$out_mov")"
                     ((pass_processed++))
                     ((total_processed++))
                     ((import_processed++))
@@ -465,6 +474,8 @@ process_files() {
                 echo -e "${C_YELLOW}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
 
                 local out_wav="$DAVINCI_DIR/${base_name}_davinci.wav"
+                out_wav=$(get_unique_path "$out_wav")
+
                 run_ffmpeg_with_progress "$file" "Příprava audia pro DaVinci: $filename" "$out_wav" \
                     -vn -y -i "$file" \
                     -c:a pcm_s16le -ar 48000 "$out_wav"
@@ -472,7 +483,7 @@ process_files() {
                 local ret=$?
                 if [ $ret -eq 0 ] && [ -s "$out_wav" ]; then
                     handle_original_file "$file"
-                    echo -e "  ${C_GREEN}${C_BOLD}[✅ ULOŽENO]${C_RESET} 1_PRORES_DAVINCI/${base_name}_davinci.wav"
+                    echo -e "  ${C_GREEN}${C_BOLD}[✅ ULOŽENO]${C_RESET} 1_PRORES_DAVINCI/$(basename -- "$out_wav")"
                     ((pass_processed++))
                     ((total_processed++))
                     ((import_processed++))
@@ -550,6 +561,8 @@ process_files() {
                 echo -e "${C_MAGENTA}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
 
                 local out_mp4="$FINAL_DIR/${base_name}_social.mp4"
+                out_mp4=$(get_unique_path "$out_mp4")
+
                 local ret=1
 
                 if [ "$ENCODER_MODE" == "NVENC" ]; then
@@ -594,7 +607,7 @@ process_files() {
 
                 if [ $ret -eq 0 ] && [ -s "$out_mp4" ]; then
                     handle_original_file "$file"
-                    echo -e "  ${C_GREEN}${C_BOLD}[✅ ULOŽENO]${C_RESET} HOTOVO/${base_name}_social.mp4"
+                    echo -e "  ${C_GREEN}${C_BOLD}[✅ ULOŽENO]${C_RESET} HOTOVO/$(basename -- "$out_mp4")"
                     ((pass_processed++))
                     ((total_processed++))
                     ((export_processed++))
@@ -611,6 +624,8 @@ process_files() {
                 echo -e "${C_MAGENTA}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
 
                 local out_mp3="$FINAL_DIR/${base_name}_social.mp3"
+                out_mp3=$(get_unique_path "$out_mp3")
+
                 run_ffmpeg_with_progress "$file" "Export MP3: $filename" "$out_mp3" \
                     -vn -y -i "$file" \
                     -c:a libmp3lame -b:a "$AUDIO_BITRATE" "$out_mp3"
@@ -618,7 +633,7 @@ process_files() {
                 local ret=$?
                 if [ $ret -eq 0 ] && [ -s "$out_mp3" ]; then
                     handle_original_file "$file"
-                    echo -e "  ${C_GREEN}${C_BOLD}[✅ ULOŽENO]${C_RESET} HOTOVO/${base_name}_social.mp3"
+                    echo -e "  ${C_GREEN}${C_BOLD}[✅ ULOŽENO]${C_RESET} HOTOVO/$(basename -- "$out_mp3")"
                     ((pass_processed++))
                     ((total_processed++))
                     ((export_processed++))
@@ -664,7 +679,7 @@ else
     echo -e "${C_CYAN}${C_BOLD}==========================================================================${C_RESET}"
 
     # Zamezení okamžitého zavření okna při spuštění ze zástupce nebo GUI
-    if [ -t 0 ] || [ -n "$DISPLAY" -o -n "$WAYLAND_DISPLAY" ]; then
+    if [ -t 0 ] && [ -z "$DAVINCICONVERT_HEADLESS" ]; then
         echo ""
         read -p "Stiskněte Enter pro ukončení..." || true
     fi
