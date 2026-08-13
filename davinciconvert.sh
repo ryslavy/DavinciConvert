@@ -164,7 +164,7 @@ fi
 [ $ENABLE_ARCHIVE -eq 1 ] && echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Safety Archiving  :${C_RESET} ${C_GREEN}${C_BOLD}ENABLED (Moving originals to ARCHIV/)${C_RESET}"
 echo -e "${C_CYAN}${C_BOLD}╚════════════════════════════════════════════════════════════════════════════════╝${C_RESET}"
 
-# Single-pass FFprobe metadata probe function
+# Single-pass FFprobe metadata probe function directly into parent shell
 probe_media() {
     local f="$1"
     PROBE_V_CODEC=""
@@ -203,11 +203,12 @@ probe_media() {
     return 0
 }
 
-# Centralized State Machine Classifier
+# Centralized State Machine Classifier directly setting PROBE_STATE in parent shell
 classify_file() {
     local f="$1"
+    PROBE_STATE="STATE_INVALID"
     
-    probe_media "$f" || { echo "STATE_INVALID"; return; }
+    probe_media "$f" || return 1
 
     local filename
     filename=$(basename -- "$f")
@@ -230,36 +231,37 @@ classify_file() {
     # 1. Test STATE_DAVINCI_READY
     if [ $is_video_file -eq 1 ]; then
         if [[ "$PROBE_V_CODEC" =~ ^(prores|dnxhd|dnxhr|cineform|rawvideo|mjpeg)$ ]] && [[ "$PROBE_A_CODEC" == pcm_* || "${PROBE_HAS_AUDIO:-0}" -eq 0 ]]; then
-            echo "STATE_DAVINCI_READY"
-            return
+            PROBE_STATE="STATE_DAVINCI_READY"
+            return 0
         fi
     elif [ $is_audio_ext -eq 1 ]; then
         if [[ "$PROBE_A_CODEC" == pcm_* ]] && [ "$ext_lower" == "wav" ]; then
-            echo "STATE_DAVINCI_READY"
-            return
+            PROBE_STATE="STATE_DAVINCI_READY"
+            return 0
         fi
     fi
 
     # 2. Test STATE_SOCIAL_READY
     if [ $is_video_file -eq 1 ]; then
         if [ "$PROBE_V_CODEC" == "h264" ] && [ "$PROBE_PIX_FMT" == "yuv420p" ] && [[ "$PROBE_A_CODEC" == "aac" || "$PROBE_A_CODEC" == "mp3" || "${PROBE_HAS_AUDIO:-0}" -eq 0 ]] && [ "$ext_lower" == "mp4" ]; then
-            echo "STATE_SOCIAL_READY"
-            return
+            PROBE_STATE="STATE_SOCIAL_READY"
+            return 0
         fi
     elif [ $is_audio_ext -eq 1 ]; then
         if [ "$PROBE_A_CODEC" == "mp3" ] && [ "$ext_lower" == "mp3" ]; then
-            echo "STATE_SOCIAL_READY"
-            return
+            PROBE_STATE="STATE_SOCIAL_READY"
+            return 0
         fi
     fi
 
     # 3. Test STATE_RAW_IMPORT (Any raw video/audio requiring conversion)
     if [ $is_video_file -eq 1 ] || [ "${PROBE_HAS_AUDIO:-0}" -gt 0 ] || [ $is_audio_ext -eq 1 ]; then
-        echo "STATE_RAW_IMPORT"
-        return
+        PROBE_STATE="STATE_RAW_IMPORT"
+        return 0
     fi
 
-    echo "STATE_INVALID"
+    PROBE_STATE="STATE_INVALID"
+    return 1
 }
 
 # Collision-safe move function to prevent overwriting files with identical names
@@ -338,8 +340,8 @@ process_files() {
             [[ "$filename" == .* ]] && continue
             [[ "$filename" == *.part || "$filename" == *.crdownload || "$filename" == *.tmp || "$filename" == *.download || "$filename" == *.ytdl ]] && continue
 
-            state=$(classify_file "$file")
-            if [ "$state" != "STATE_SOCIAL_READY" ]; then
+            classify_file "$file"
+            if [ "$PROBE_STATE" != "STATE_SOCIAL_READY" ]; then
                 echo ""
                 echo -e "${C_YELLOW}${C_BOLD}[🔀 SMART REROUTE]${C_RESET} '$filename' placed in 3_FINAL_SOCIAL by mistake. Moving to 2_EXPORT for social media encoding..."
                 safe_move "$file" "$EXPORT_DIR"
@@ -360,15 +362,15 @@ process_files() {
             [[ "$filename" == .* ]] && continue
             [[ "$filename" == *.part || "$filename" == *.crdownload || "$filename" == *.tmp || "$filename" == *.download || "$filename" == *.ytdl ]] && continue
 
-            state=$(classify_file "$file")
-            if [ "$state" == "STATE_SOCIAL_READY" ]; then
+            classify_file "$file"
+            if [ "$PROBE_STATE" == "STATE_SOCIAL_READY" ]; then
                 echo ""
                 echo -e "${C_CYAN}${C_BOLD}[⏩ SMART BYPASS]${C_RESET} '$filename' is ALREADY converted for Social Media! Moving to 3_FINAL_SOCIAL..."
                 safe_move "$file" "$FINAL_DIR"
                 ((pass_processed++))
                 ((total_processed++))
                 continue
-            elif [ "$state" != "STATE_DAVINCI_READY" ]; then
+            elif [ "$PROBE_STATE" != "STATE_DAVINCI_READY" ]; then
                 echo ""
                 echo -e "${C_YELLOW}${C_BOLD}[🔀 SMART REROUTE]${C_RESET} '$filename' placed in 1_PRORES_DAVINCI by mistake. Moving to 1_IMPORT..."
                 safe_move "$file" "$IMPORT_DIR"
@@ -396,9 +398,9 @@ process_files() {
             [[ "$filename" == .* ]] && continue
             [[ "$filename" == *.part || "$filename" == *.crdownload || "$filename" == *.tmp || "$filename" == *.download || "$filename" == *.ytdl ]] && continue
 
-            state=$(classify_file "$file")
+            classify_file "$file"
 
-            if [ "$state" == "STATE_DAVINCI_READY" ]; then
+            if [ "$PROBE_STATE" == "STATE_DAVINCI_READY" ]; then
                 echo ""
                 echo -e "${C_CYAN}${C_BOLD}[⏩ SMART BYPASS]${C_RESET} '$filename' is ALREADY in ProRes/DNxHD or WAV PCM! Moving..."
                 safe_move "$file" "$DAVINCI_DIR"
@@ -406,14 +408,14 @@ process_files() {
                 ((total_processed++))
                 ((import_processed++))
                 continue
-            elif [ "$state" == "STATE_SOCIAL_READY" ]; then
+            elif [ "$PROBE_STATE" == "STATE_SOCIAL_READY" ]; then
                 echo ""
                 echo -e "${C_CYAN}${C_BOLD}[⏩ SMART BYPASS]${C_RESET} '$filename' is ALREADY converted for Social Media! Moving to 3_FINAL_SOCIAL..."
                 safe_move "$file" "$FINAL_DIR"
                 ((pass_processed++))
                 ((total_processed++))
                 continue
-            elif [ "$state" == "STATE_INVALID" ]; then
+            elif [ "$PROBE_STATE" == "STATE_INVALID" ]; then
                 echo ""
                 echo -e "${C_RED}${C_BOLD}[🛑 CORRUPTED FILE]${C_RESET} '$filename' is corrupted or unreadable. Moving to CORRUPTED/..."
                 safe_move "$file" "$CORRUPT_DIR"
@@ -512,16 +514,16 @@ process_files() {
             [[ "$filename" == .* ]] && continue
             [[ "$filename" == *.part || "$filename" == *.crdownload || "$filename" == *.tmp || "$filename" == *.download || "$filename" == *.ytdl ]] && continue
 
-            state=$(classify_file "$file")
+            classify_file "$file"
 
-            if [ "$state" == "STATE_RAW_IMPORT" ]; then
+            if [ "$PROBE_STATE" == "STATE_RAW_IMPORT" ]; then
                 echo ""
                 echo -e "${C_YELLOW}${C_BOLD}[🔀 SMART ROUTE]${C_RESET} '$filename' appears to be raw video/audio. Moving to 1_IMPORT..."
                 safe_move "$file" "$IMPORT_DIR"
                 ((pass_processed++))
                 ((total_processed++))
                 continue
-            elif [ "$state" == "STATE_SOCIAL_READY" ]; then
+            elif [ "$PROBE_STATE" == "STATE_SOCIAL_READY" ]; then
                 echo ""
                 echo -e "${C_CYAN}${C_BOLD}[⏩ SMART BYPASS]${C_RESET} '$filename' is ALREADY converted for Social Media! Moving to 3_FINAL_SOCIAL..."
                 safe_move "$file" "$FINAL_DIR"
@@ -529,7 +531,7 @@ process_files() {
                 ((total_processed++))
                 ((export_processed++))
                 continue
-            elif [ "$state" == "STATE_INVALID" ]; then
+            elif [ "$PROBE_STATE" == "STATE_INVALID" ]; then
                 echo ""
                 echo -e "${C_RED}${C_BOLD}[🛑 CORRUPTED FILE]${C_RESET} '$filename' is corrupted or unreadable. Moving to CORRUPTED/..."
                 safe_move "$file" "$CORRUPT_DIR"
