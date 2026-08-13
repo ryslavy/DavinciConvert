@@ -142,13 +142,13 @@ ENCODER_MODE=$(detect_best_encoder)
 echo -e "${C_CYAN}${C_BOLD}╔════════════════════════════════════════════════════════════════════════════════╗${C_RESET}"
 echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_BOLD}🎬 DavinciConvert v1.0.0${C_RESET} ${C_DIM}| Chytrá konverze médií pro Linux${C_RESET}              ${C_CYAN}${C_BOLD}║${C_RESET}"
 echo -e "${C_CYAN}${C_BOLD}╠════════════════════════════════════════════════════════════════════════════════╣${C_RESET}"
-echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Pracovní složka  :${C_RESET} ${C_WHITE}$DIR${C_RESET}"
+echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Pracovní složka     :${C_RESET} ${C_WHITE}$DIR${C_RESET}"
 if [ "$ENCODER_MODE" == "CPU" ]; then
-    echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Režim akcelerace :${C_RESET} ${C_YELLOW}${C_BOLD}CPU (AMD / Intel Multi-Threading - $CPU_PRESET)${C_RESET}"
+    echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Exportní akcelerace :${C_RESET} ${C_YELLOW}${C_BOLD}CPU (AMD / Intel Multi-Threading - $CPU_PRESET)${C_RESET}"
 else
-    echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Režim akcelerace :${C_RESET} ${C_GREEN}${C_BOLD}Hardware ($ENCODER_MODE GPU akcelerace)${C_RESET}"
+    echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Exportní akcelerace :${C_RESET} ${C_GREEN}${C_BOLD}Hardware ($ENCODER_MODE pro export na sítě)${C_RESET}"
 fi
-[ $ENABLE_ARCHIVE -eq 1 ] && echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Archivace originálů:${C_RESET} ${C_GREEN}${C_BOLD}ZAPNUTA (Přesouvám do ARCHIV/)${C_RESET}"
+[ $ENABLE_ARCHIVE -eq 1 ] && echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Archivace originálů :${C_RESET} ${C_GREEN}${C_BOLD}ZAPNUTA (Přesouvám do ARCHIV/)${C_RESET}"
 echo -e "${C_CYAN}${C_BOLD}╚════════════════════════════════════════════════════════════════════════════════╝${C_RESET}"
 
 # Jednoprůchodový extraktor metadat pomocí ffprobe directly into parent shell
@@ -441,6 +441,7 @@ process_files() {
                 echo -e "${C_YELLOW}${C_BOLD}│${C_RESET} ${C_BOLD}Soubor:${C_RESET}      $filename"
                 echo -e "${C_YELLOW}${C_BOLD}│${C_RESET} ${C_DIM}Formát:${C_RESET}      ${PROBE_WIDTH}x${PROBE_HEIGHT} ($label @ ${PROBE_FPS}FPS | Audio stop: $PROBE_HAS_AUDIO)"
                 echo -e "${C_YELLOW}${C_BOLD}│${C_RESET} ${C_DIM}Cílový kodek:${C_RESET} ${C_GREEN}${C_BOLD}Apple ProRes 422 MOV + Uncompressed PCM Audio${C_RESET}"
+                echo -e "${C_YELLOW}${C_BOLD}│${C_RESET} ${C_DIM}Enkodér:${C_RESET}      ${C_YELLOW}${C_BOLD}CPU Multi-threading (ProRes je CPU master kodek)${C_RESET}"
                 echo -e "${C_YELLOW}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
                 
                 local out_mov="$DAVINCI_DIR/${base_name}_davinci.mov"
@@ -470,6 +471,7 @@ process_files() {
                 echo -e "${C_YELLOW}${C_BOLD}┌─ [ 🎵 IMPORT Audio -> DaVinci Prep ] ─────────────────────────────────────┐${C_RESET}"
                 echo -e "${C_YELLOW}${C_BOLD}│${C_RESET} ${C_BOLD}Soubor:${C_RESET}      $filename"
                 echo -e "${C_YELLOW}${C_BOLD}│${C_RESET} ${C_DIM}Cílový kodek:${C_RESET} ${C_GREEN}${C_BOLD}WAV / Uncompressed PCM 48kHz${C_RESET}"
+                echo -e "${C_YELLOW}${C_BOLD}│${C_RESET} ${C_DIM}Enkodér:${C_RESET}      ${C_YELLOW}${C_BOLD}CPU (Nekomprimovaný PCM zvuk)${C_RESET}"
                 echo -e "${C_YELLOW}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
 
                 local out_wav="$DAVINCI_DIR/${base_name}_davinci.wav"
@@ -556,7 +558,11 @@ process_files() {
                 echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_BOLD}Soubor:${C_RESET}      $filename"
                 echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Formát:${C_RESET}      ${PROBE_WIDTH}x${PROBE_HEIGHT} ($label @ ${PROBE_FPS}FPS | Audio stop: $PROBE_HAS_AUDIO)"
                 echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Cílový kodek:${C_RESET} ${C_GREEN}${C_BOLD}H.264 MP4 (yuv420p | Bitrate: $target_bitrate)${C_RESET}"
-                echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Enkodér:${C_RESET}      $ENCODER_MODE"
+                if [ "$ENCODER_MODE" == "CPU" ]; then
+                    echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Enkodér:${C_RESET}      ${C_YELLOW}${C_BOLD}CPU (libx264 - $CPU_PRESET)${C_RESET}"
+                else
+                    echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Enkodér:${C_RESET}      ${C_GREEN}${C_BOLD}Hardware ($ENCODER_MODE GPU akcelerace)${C_RESET}"
+                fi
                 echo -e "${C_MAGENTA}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
 
                 local out_mp4="$FINAL_DIR/${base_name}_social.mp4"
@@ -620,6 +626,7 @@ process_files() {
                 echo -e "${C_MAGENTA}${C_BOLD}┌─ [ 🎵 EXPORT Audia -> MP3 pro sociální sítě ] ───────────────────────────┐${C_RESET}"
                 echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_BOLD}Soubor:${C_RESET}      $filename"
                 echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Cílový kodek:${C_RESET} ${C_GREEN}${C_BOLD}MP3 Audio ($AUDIO_BITRATE Bitrate)${C_RESET}"
+                echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Enkodér:${C_RESET}      ${C_YELLOW}${C_BOLD}CPU (libmp3lame)${C_RESET}"
                 echo -e "${C_MAGENTA}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
 
                 local out_mp3="$FINAL_DIR/${base_name}_social.mp3"

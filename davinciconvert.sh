@@ -155,13 +155,13 @@ ENCODER_MODE=$(detect_best_encoder)
 echo -e "${C_CYAN}${C_BOLD}╔════════════════════════════════════════════════════════════════════════════════╗${C_RESET}"
 echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_BOLD}🎬 DavinciConvert v1.0.0${C_RESET} ${C_DIM}| Smart Media Transcoder for Linux${C_RESET}             ${C_CYAN}${C_BOLD}║${C_RESET}"
 echo -e "${C_CYAN}${C_BOLD}╠════════════════════════════════════════════════════════════════════════════════╣${C_RESET}"
-echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Working Directory :${C_RESET} ${C_WHITE}$DIR${C_RESET}"
+echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Working Directory   :${C_RESET} ${C_WHITE}$DIR${C_RESET}"
 if [ "$ENCODER_MODE" == "CPU" ]; then
-    echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Hardware Mode     :${C_RESET} ${C_YELLOW}${C_BOLD}CPU (Multi-threaded Fallback - $CPU_PRESET)${C_RESET}"
+    echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Export Acceleration :${C_RESET} ${C_YELLOW}${C_BOLD}CPU (Multi-threaded Fallback - $CPU_PRESET)${C_RESET}"
 else
-    echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Hardware Mode     :${C_RESET} ${C_GREEN}${C_BOLD}Hardware ($ENCODER_MODE GPU Acceleration)${C_RESET}"
+    echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Export Acceleration :${C_RESET} ${C_GREEN}${C_BOLD}Hardware ($ENCODER_MODE GPU Acceleration)${C_RESET}"
 fi
-[ $ENABLE_ARCHIVE -eq 1 ] && echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Safety Archiving  :${C_RESET} ${C_GREEN}${C_BOLD}ENABLED (Moving originals to ARCHIV/)${C_RESET}"
+[ $ENABLE_ARCHIVE -eq 1 ] && echo -e "${C_CYAN}${C_BOLD}║${C_RESET}  ${C_DIM}Safety Archiving    :${C_RESET} ${C_GREEN}${C_BOLD}ENABLED (Moving originals to ARCHIV/)${C_RESET}"
 echo -e "${C_CYAN}${C_BOLD}╚════════════════════════════════════════════════════════════════════════════════╝${C_RESET}"
 
 # Single-pass FFprobe metadata probe function directly into parent shell
@@ -454,6 +454,7 @@ process_files() {
                 echo -e "${C_YELLOW}${C_BOLD}│${C_RESET} ${C_BOLD}File:${C_RESET}        $filename"
                 echo -e "${C_YELLOW}${C_BOLD}│${C_RESET} ${C_DIM}Format:${C_RESET}      ${PROBE_WIDTH}x${PROBE_HEIGHT} ($label @ ${PROBE_FPS}FPS | Audio Tracks: $PROBE_HAS_AUDIO)"
                 echo -e "${C_YELLOW}${C_BOLD}│${C_RESET} ${C_DIM}Target Codec:${C_RESET} ${C_GREEN}${C_BOLD}Apple ProRes 422 MOV + Uncompressed PCM Audio${C_RESET}"
+                echo -e "${C_YELLOW}${C_BOLD}│${C_RESET} ${C_DIM}Encoder:${C_RESET}     ${C_YELLOW}${C_BOLD}CPU Multi-threading (ProRes is CPU master codec)${C_RESET}"
                 echo -e "${C_YELLOW}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
 
                 local out_mov="$DAVINCI_DIR/${base_name}_davinci.mov"
@@ -483,6 +484,7 @@ process_files() {
                 echo -e "${C_YELLOW}${C_BOLD}┌─ [ 🎵 IMPORT Audio -> DaVinci Prep ] ─────────────────────────────────────┐${C_RESET}"
                 echo -e "${C_YELLOW}${C_BOLD}│${C_RESET} ${C_BOLD}File:${C_RESET}        $filename"
                 echo -e "${C_YELLOW}${C_BOLD}│${C_RESET} ${C_DIM}Target Codec:${C_RESET} ${C_GREEN}${C_BOLD}WAV / Uncompressed PCM 48kHz${C_RESET}"
+                echo -e "${C_YELLOW}${C_BOLD}│${C_RESET} ${C_DIM}Encoder:${C_RESET}     ${C_YELLOW}${C_BOLD}CPU (Uncompressed PCM Audio)${C_RESET}"
                 echo -e "${C_YELLOW}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
 
                 local out_wav="$DAVINCI_DIR/${base_name}_davinci.wav"
@@ -569,7 +571,11 @@ process_files() {
                 echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_BOLD}File:${C_RESET}        $filename"
                 echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Format:${C_RESET}      ${PROBE_WIDTH}x${PROBE_HEIGHT} ($label @ ${PROBE_FPS}FPS | Audio Tracks: $PROBE_HAS_AUDIO)"
                 echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Target Codec:${C_RESET} ${C_GREEN}${C_BOLD}H.264 MP4 (yuv420p | Bitrate: $target_bitrate)${C_RESET}"
-                echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Encoder Mode:${C_RESET} $ENCODER_MODE"
+                if [ "$ENCODER_MODE" == "CPU" ]; then
+                    echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Encoder:${C_RESET}     ${C_YELLOW}${C_BOLD}CPU (libx264 - $CPU_PRESET)${C_RESET}"
+                else
+                    echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Encoder:${C_RESET}     ${C_GREEN}${C_BOLD}Hardware ($ENCODER_MODE GPU Acceleration)${C_RESET}"
+                fi
                 echo -e "${C_MAGENTA}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
 
                 local out_mp4="$FINAL_DIR/${base_name}_social.mp4"
@@ -632,6 +638,7 @@ process_files() {
                 echo -e "${C_MAGENTA}${C_BOLD}┌─ [ 🎵 EXPORT Audio -> Social Media MP3 ] ─────────────────────────────────┐${C_RESET}"
                 echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_BOLD}File:${C_RESET}        $filename"
                 echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Target Codec:${C_RESET} ${C_GREEN}${C_BOLD}MP3 Audio ($AUDIO_BITRATE Bitrate)${C_RESET}"
+                echo -e "${C_MAGENTA}${C_BOLD}│${C_RESET} ${C_DIM}Encoder:${C_RESET}     ${C_YELLOW}${C_BOLD}CPU (libmp3lame)${C_RESET}"
                 echo -e "${C_MAGENTA}${C_BOLD}└──────────────────────────────────────────────────────────────────────────┘${C_RESET}"
 
                 local out_mp3="$FINAL_DIR/${base_name}_social.mp3"
@@ -663,7 +670,8 @@ process_files() {
         echo -e "${C_GREEN}${C_BOLD}╔════════════════════════════════════════════════════════════════════════════════╗${C_RESET}"
         echo -e "${C_GREEN}${C_BOLD}║${C_RESET}  ${C_BOLD}🎉 PROCESSING COMPLETED SUCCESSFULLY!${C_RESET}                                          ${C_GREEN}${C_BOLD}║${C_RESET}"
         echo -e "${C_GREEN}${C_BOLD}╠════════════════════════════════════════════════════════════════════════════════╣${C_RESET}"
-        echo -e "${C_GREEN}${C_BOLD}║${C_RESET}  ${C_DIM}Total Converted    :${C_RESET} ${C_BOLD}$import_processed (ProRes / WAV PCM)${C_RESET}"
+        echo -e "${C_GREEN}${C_BOLD}║${C_RESET}  ${C_DIM}Total Converted    :${C_RESET} ${C_BOLD}$total_processed files${C_RESET}"
+        echo -e "${C_GREEN}${C_BOLD}║${C_RESET}  ${C_DIM}DaVinci Prep Files :${C_RESET} ${C_BOLD}$import_processed (ProRes / WAV PCM)${C_RESET}"
         echo -e "${C_GREEN}${C_BOLD}║${C_RESET}  ${C_DIM}Social Media Exports:${C_RESET} ${C_BOLD}$export_processed (H.264 / MP3)${C_RESET}"
         echo -e "${C_GREEN}${C_BOLD}╚════════════════════════════════════════════════════════════════════════════════╝${C_RESET}"
 
