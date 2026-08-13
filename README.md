@@ -7,7 +7,7 @@ DavinciConvert is an automated media transcoding utility designed specifically f
 ## About the Project
 
 DaVinci Resolve Free on Linux has native codec and container limitations due to proprietary software licensing restrictions:
-- No native H.264 or H.265 video decoding within standard media containers.
+- No native H.264 or H.265 video decoding within standard media containers on Linux Free edition.
 - No native AAC audio decoding, which results in imported clips having missing or silent audio.
 - Format incompatibilities when exporting edited footage back to web platforms (such as missing `yuv420p` pixel format support on mobile devices).
 
@@ -19,10 +19,13 @@ DavinciConvert automates the entire preparation and export pipeline:
 
 ## Key Features
 
+- **State-Machine Routing Engine:** 1-pass `ffprobe` metadata inspection with deterministic state machine routing across all 4 directories.
 - **Multi-Audio Track Preservation:** Automatically maps and preserves all independent audio streams from OBS Studio recordings (Microphone, Game Audio, Discord) into separate audio tracks for DaVinci Resolve.
+- **Collision-Safe File Movement:** Prevents accidental file overwrites when auto-routing files with identical names.
+- **Quarantine System:** Moves corrupt, zero-byte, or unreadable media files into a `POŠKOZENÉ/` (or `CORRUPTED/`) directory automatically.
+- **Date-Based Safety Archiving:** Organizes archived raw input files into clean `ARCHIV/YYYY-MM-DD/` directories via `--archive`.
 - **Desktop Notifications:** Sends native OS desktop notifications via `notify-send` when batch processing completes.
 - **Linux Desktop Launcher:** Generates and installs a native `.desktop` application launcher into GNOME / Fedora application menus via `--install-desktop`.
-- **Safety Archive Option:** Option to move original raw files into an `ARCHIV/` directory via `--archive` instead of deleting them.
 - **Subtitle & Chapter Preservation:** Preserves embedded subtitle tracks and chapter markers during transcoding.
 - **Universal Smart Routing Matrix:** Uses `ffprobe` to inspect media streams directly and reroutes misplaced files across folders automatically.
 - **Hardware Acceleration:** Auto-probes NVIDIA NVENC, Intel QSV, and AMD VA-API with zero-crash CPU multi-threading fallback.
@@ -41,8 +44,9 @@ DavinciConvert/
 ├── 1_IMPORT/          Input directory for raw videos and audio files
 ├── 1_PRORES_DAVINCI/  Output directory containing converted ProRes MOV and WAV PCM files
 ├── 2_EXPORT/          Input directory for master renders exported from DaVinci Resolve
-├── 3_FINAL_SOCIAL/    Output directory containing optimized H.264 MP4 and MP3 files
-└── ARCHIV/            (Optional) Safety archive directory for original input files
+├── 3_FINAL_SOCIAL/    Output directory containing optimized H.264 MP4 and MP3 files (HOTOVO in CZ)
+├── ARCHIV/            (Optional) Safety archive directory for original input files (ARCHIV/YYYY-MM-DD/)
+└── CORRUPTED/         Quarantine directory for broken or unreadable files (POŠKOZENÉ in CZ)
 ```
 
 ### Media Processing Pipeline
@@ -74,6 +78,59 @@ flowchart LR
 
 ---
 
+## CLI Flags & Advanced Options
+
+DavinciConvert supports a set of command-line flags to customize quality, execution modes, archiving, and desktop integration:
+
+```text
+Usage: ./davinciconvert.sh [OPTIONS]  (or ./START.sh [OPTIONS])
+
+Options:
+  -w, --watch            Watch directory continuously for new files in real time
+  -a, --archive          Move original raw files into ARCHIV/YYYY-MM-DD/ instead of deleting
+  -q, --quality <lt|std|hq>  Set ProRes quality profile (lt = ProRes LT, std = Standard, hq = ProRes HQ)
+  -p, --preset <preset>   Set CPU encoding speed (ultrafast, superfast, fast, medium, slow)
+  --install-desktop      Install Linux Desktop Launcher into application grid
+  -h, --help             Show help menu
+```
+
+### Detailed Flag Descriptions
+
+#### 1. Real-Time Watch Mode (`-w` / `--watch`)
+Keeps the script running continuously in the background, polling directories every 3 seconds for new incoming files.
+```bash
+./davinciconvert.sh --watch
+```
+
+#### 2. Date-Based Safety Archiving (`-a` / `--archive`)
+Instead of removing raw input files after successful transcoding, moves them to a date-stamped folder inside `ARCHIV/YYYY-MM-DD/`.
+```bash
+./davinciconvert.sh --archive
+```
+
+#### 3. ProRes Quality Overrides (`-q` / `--quality`)
+Allows forcing a specific Apple ProRes 422 profile for DaVinci import preparation:
+- `lt`: **ProRes 422 LT** (Lightweight, smaller file size, ideal for 1080p).
+- `std` or `standard`: **ProRes 422 Standard** (High quality, ideal for 4K).
+- `hq`: **ProRes 422 HQ** (Maximum quality master format).
+```bash
+./davinciconvert.sh --quality std
+```
+
+#### 4. CPU Encoding Speed Preset (`-p` / `--preset`)
+Controls the CPU encoding speed/compression ratio for x264 exports (`ultrafast`, `superfast`, `fast`, `medium`, `slow`).
+```bash
+./davinciconvert.sh --preset fast
+```
+
+#### 5. Desktop Application Launcher Installation (`--install-desktop`)
+Registers DavinciConvert into your desktop environment's application menu (GNOME, KDE, XFCE). Creates `$HOME/.local/share/applications/DavinciConvert.desktop` pointing directly to the local script.
+```bash
+./davinciconvert.sh --install-desktop
+```
+
+---
+
 ## Usage Instructions
 
 ### Prerequisites
@@ -91,20 +148,6 @@ sudo apt update && sudo apt install ffmpeg
 sudo pacman -S ffmpeg
 ```
 
-### Command Line Options
-
-```text
-Usage: ./davinciconvert.sh [OPTIONS]
-
-Options:
-  -w, --watch            Watch directory continuously for new files
-  -a, --archive          Move original raw files to ARCHIV/ folder instead of deleting
-  -q, --quality <lt|std|hq>  Set ProRes quality profile (lt = ProRes LT, std = Standard, hq = ProRes HQ)
-  -p, --preset <preset>   Set CPU encoding speed (ultrafast, superfast, fast, medium, slow)
-  --install-desktop      Install Linux Desktop Launcher into application grid
-  -h, --help             Show help menu
-```
-
 ### Running the Transcoder
 
 #### Single Pass Execution
@@ -115,20 +158,6 @@ Double-click `davinciconvert.sh` (or `START.sh`) from your desktop environment, 
 ```
 
 An interactive terminal window will automatically launch, displaying real-time encoding stats and progress. To stop execution at any point, close the terminal window or press `Ctrl+C`.
-
-#### Installing Desktop Launcher
-To add DavinciConvert to your Linux application menu (GNOME / Fedora App Grid):
-
-```bash
-./davinciconvert.sh --install-desktop
-```
-
-#### Continuous Watch Mode
-To keep DavinciConvert running in the background and continuously monitor directories for newly added files:
-
-```bash
-./davinciconvert.sh --watch
-```
 
 ---
 
